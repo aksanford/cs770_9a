@@ -1,0 +1,669 @@
+---
+title: "Descriptive Statistics"
+format: html
+---
+
+## Summary
+
+```{r}
+#| label: summary-prep
+#| ref.label: !expr c("setup", "load-data", "outcomes-long")
+#| include: false
+```
+
+```{r}
+#| label: summary-stats
+#| include: false
+
+f2 <- \(x) format(round(x, 2), nsmall = 2)
+rng <- \(x) paste0(f2(min(x)), "–", f2(max(x)))
+irng <- \(x) if (min(x) == max(x)) min(x) else paste0(min(x), "–", max(x))
+
+# Unrounded statistics for the summary text
+s_overall <- describe_outcomes(outcomes, digits = 10)
+s_vignette <- describe_outcomes(outcomes, vignette, digits = 10)
+s_condition <- describe_outcomes(outcomes, condition, digits = 10)
+s_vig_cond <- describe_outcomes(outcomes, vignette, condition, digits = 10)
+s_vig_status <- describe_outcomes(outcomes, vignette, status, digits = 10)
+
+n_participants <- n_distinct(outcomes$ResponseId)
+n_missing <- sum(is.na(outcomes[c("trust_score", "accept_score", "satisfaction")]))
+
+mean_sd <- \(m) {
+  row <- filter(s_overall, measure == m)
+  glue::glue("M = {f2(row$mean)}, SD = {f2(row$sd)}")
+}
+lowest_measure <- as.character(s_overall$measure[which.min(s_overall$mean)])
+max_vignette_spread <- s_vignette |>
+  summarise(spread = max(mean) - min(mean), .by = measure) |>
+  pull(spread) |>
+  max()
+
+cond_diff <- \(df) {
+  df |>
+    select(measure, any_of("vignette"), condition, mean) |>
+    pivot_wider(names_from = condition, values_from = mean) |>
+    mutate(diff = Asked - `Not asked`)
+}
+pooled_cond_diff <- cond_diff(s_condition)
+vignette_cond_diff <- cond_diff(s_vig_cond)
+
+status_ranks <- s_vig_status |>
+  summarise(
+    declined_lowest = mean[status == "Declined both"] == min(mean),
+    consented_highest = mean[status == "Consented to both"] == max(mean),
+    .by = c(measure, vignette)
+  )
+n_cells <- nrow(status_ranks)
+small_cells <- outcomes |>
+  count(vignette, status) |>
+  filter(status %in% c("Mixed", "Declined both")) |>
+  pull(n)
+
+r_vignette <- cor_outcomes(outcomes, vignette, digits = 10)
+r_strongest_pair <- r_vignette |>
+  summarise(r = mean(pearson), .by = pair) |>
+  slice_max(r, n = 1) |>
+  pull(pair) |>
+  as.character()
+
+r_cond <- cor_outcomes(outcomes, vignette, condition, digits = 10) |>
+  select(vignette, pair, condition, pearson, conf_low, conf_high) |>
+  pivot_wider(names_from = condition, values_from = c(pearson, conf_low, conf_high)) |>
+  mutate(
+    asked_higher = pearson_Asked > `pearson_Not asked`,
+    ci_overlap = conf_low_Asked <= `conf_high_Not asked` &
+      `conf_low_Not asked` <= conf_high_Asked
+  )
+
+summary_person_means <- outcomes |>
+  summarise(
+    across(c(trust_score, accept_score, satisfaction), mean),
+    .by = ResponseId
+  )
+r_between <- cor_outcomes(summary_person_means, digits = 10)
+r_within <- rmcorr_outcomes(outcomes, digits = 10)
+
+summary_orders <- outcomes |>
+  mutate(cond = if_else(condition == "Asked", "A", "B")) |>
+  summarise(cond_order = str_flatten(cond[order(vignette)]), .by = ResponseId)
+r_order <- outcomes |>
+  left_join(summary_orders, by = join_by(ResponseId)) |>
+  rmcorr_outcomes(cond_order, digits = 10)
+n_order_ci_include_overall <- r_order |>
+  left_join(select(r_within, pair, overall = pearson), by = join_by(pair)) |>
+  with(sum(conf_low <= overall & overall <= conf_high))
+```
+
+Key descriptive findings for the `r n_participants` participants in the
+panel, each of whom rated three vignettes (all outcomes on a 1–5 scale;
+`r n_missing` missing scores). Numbers are calculated when the document
+renders, but the interpretive wording is not, so re-read it if the data change.
+
+- **Overall levels.** All three measures sit near the scale midpoint: trust
+  (`r mean_sd("Trust")`), acceptance (`r mean_sd("Acceptance")`) and
+  satisfaction (`r mean_sd("Satisfaction")`), with `r str_to_lower(lowest_measure)`
+  lowest. Vignette means for any one measure differ by at most `r f2(max_vignette_spread)`.
+- **Condition (asked vs. not asked).** Pooled across vignettes, Asked minus
+  Not asked differences range from
+  `r f2(min(pooled_cond_diff$diff))` to `r f2(max(pooled_cond_diff$diff))`.
+  Within individual vignettes they range
+  from `r f2(min(vignette_cond_diff$diff))` to
+  `r f2(max(vignette_cond_diff$diff))`, and the Asked mean is higher in
+  `r sum(vignette_cond_diff$diff > 0)` of `r nrow(vignette_cond_diff)`
+  vignette × measure comparisons. This has not been tested formally.
+- **Consent status.** Participants who declined both consent requests gave
+  the lowest mean rating in `r sum(status_ranks$declined_lowest)` of
+  `r n_cells` vignette × measure cells; those who consented to both gave the
+  highest in `r sum(status_ranks$consented_highest)` of `r n_cells`. These
+  groups are self-selected and the "Declined both" and "Mixed" cells are small
+  (`r irng(small_cells)` per vignette), so this describes who chose what rather
+  than an effect of consenting.
+- **Correlations among outcomes.** Within each vignette, the outcomes
+  correlate at r = `r rng(r_vignette$pearson)`, with
+  `r str_to_lower(r_strongest_pair)` the most strongly related pair on
+  average. Split by condition, the Asked correlation is higher in
+  `r sum(r_cond$asked_higher)` of `r nrow(r_cond)` vignette × pair
+  comparisons, and the 95% CIs overlap in `r sum(r_cond$ci_overlap)` of the
+  `r nrow(r_cond)` comparisons (overlap is not a formal test).
+- **Between- vs. within-person.** Between-person correlations (participant
+  means across vignettes) are r = `r rng(r_between$pearson)`; within-person
+  (repeated-measures) correlations are r = `r rng(r_within$pearson)`. Split by
+  condition order (`r irng(r_order$k)` participants per order), within-person
+  correlations range from `r f2(min(r_order$pearson))` to
+  `r f2(max(r_order$pearson))`, and their 95% CIs include the overall
+  within-person value in `r n_order_ci_include_overall` of
+  `r nrow(r_order)` cases.
+
+## Setup
+
+```{r}
+#| label: setup
+#| message: false
+
+library(tidyverse)
+source(here::here("scripts", "functions.R"))
+```
+
+## Load data
+
+The cleaned data comes from `clean_survey.qmd`. Participants who answered none
+of the vignette questions are excluded from the panel.
+
+```{r}
+#| label: load-data
+
+data <- read_csv(
+  here::here("data", "data_clean.csv"),
+  show_col_types = FALSE
+)
+
+panel <- data |>
+  filter(if_any(matches("^v[1-3]_status1$"), \(x) !is.na(x)))
+
+tibble(
+  respondents = nrow(data),
+  excluded = nrow(data) - nrow(panel),
+  panel = nrow(panel)
+)
+```
+
+## Demographics
+
+Ordinal variables are given their natural order; nominal variables are ordered
+by frequency.
+
+```{r}
+#| label: demo-factors
+
+ai_freq_levels <- c("Never", "Less than monthly", "Monthly", "Weekly", "Daily")
+
+demo <- panel |>
+  mutate(
+    demo_age = factor(
+      demo_age,
+      levels = c("18-20", "21-24", "25-29", "30-39", "40 or older")
+    ),
+    demo_gender = fct_infreq(demo_gender),
+    demo_role = fct_infreq(demo_role),
+    demo_ai_school_work = factor(demo_ai_school_work, levels = ai_freq_levels),
+    demo_ai_personal = factor(demo_ai_personal, levels = ai_freq_levels),
+    demo_ai_health = factor(demo_ai_health, levels = c("Yes", "No", "Not sure")),
+    demo_field_cat = demo_field_cat |>
+      fct_infreq() |>
+      fct_relevel("Not currently working", "Other", after = Inf)
+  )
+
+# Any values that didn't match the expected levels would show up as NA here
+demo |>
+  summarise(across(starts_with("demo_") & where(is.factor), \(x) sum(is.na(x))))
+```
+
+### Summary table
+
+Percentages are out of participants who answered each question; non-responses
+are counted separately as "Unknown".
+
+```{r}
+#| label: demo-table
+
+library(gtsummary)
+
+demo |>
+  select(starts_with("demo_") & where(is.factor)) |>
+  tbl_summary(
+    label = list(
+      demo_age ~ "Age range",
+      demo_gender ~ "Gender",
+      demo_role ~ "Role",
+      demo_field_cat ~ "Field",
+      demo_ai_school_work ~ "AI use for school or work",
+      demo_ai_personal ~ "AI use for personal purposes",
+      demo_ai_health ~ "Ever used AI for own health"
+    ),
+    statistic = all_categorical() ~ "{n} ({p}%)",
+    missing_text = "Unknown"
+  ) |>
+  bold_labels()
+```
+
+### Age
+
+```{r}
+#| label: plot-age
+
+plot_counts(demo, demo_age, "Age range")
+```
+
+### Gender
+
+```{r}
+#| label: plot-gender
+
+plot_counts(demo, demo_gender, "Gender")
+```
+
+### Role
+
+```{r}
+#| label: plot-role
+
+plot_counts(demo, demo_role, "Which best describes you?")
+```
+
+### AI use
+
+```{r}
+#| label: plot-ai-use
+
+plot_counts(demo, demo_ai_school_work, "AI use for school or work")
+
+plot_counts(demo, demo_ai_personal, "AI use for personal purposes")
+
+plot_counts(demo, demo_ai_health, "Ever used AI for own health")
+```
+
+### Field
+
+`demo_field_cat` is coded from the free-text `demo_field` in
+`clean_survey.qmd`.
+
+```{r}
+#| label: plot-field
+
+plot_counts(demo, demo_field_cat, "Field of study or work")
+```
+
+## Outcome measures
+
+Trust and acceptance are composite scores (item means, 1–5); satisfaction is a
+single 1–5 Likert item. The data are reshaped to one row per participant per
+vignette.
+
+Each vignette had two consent requests, so `status1` and `status2` are combined
+into a single consent status:
+
+- **Not asked**: condition B (informed only).
+- **Consented to both**: condition A, said yes to both requests.
+- **Mixed**: condition A, said yes to one request and no to the other.
+- **Declined both**: condition A, said no to both requests.
+
+```{r}
+#| label: outcomes-long
+
+outcomes <- panel |>
+  pivot_vignettes_long() |>
+  mutate(
+    vignette = factor(vignette, labels = paste0("V", 1:3)),
+    condition = factor(
+      if_else(status1 == "Was not asked for consent", "Not asked", "Asked"),
+      levels = c("Asked", "Not asked")
+    ),
+    status = case_when(
+      status1 == "Was not asked for consent" ~ "Not asked",
+      status1 == "Consented to MedHelper" & status2 == "Consented to MedHelper" ~
+        "Consented to both",
+      status1 == "Did not consent to MedHelper" &
+        status2 == "Did not consent to MedHelper" ~ "Declined both",
+      !is.na(status1) & !is.na(status2) ~ "Mixed"
+    ),
+    status = factor(
+      status,
+      levels = c("Not asked", "Consented to both", "Mixed", "Declined both")
+    )
+  ) |>
+  select(ResponseId, vignette, condition, status, status1, status2,
+         trust_score, accept_score, satisfaction)
+
+# Check the status recode and the size of each cell
+outcomes |>
+  count(vignette, status) |>
+  pivot_wider(names_from = vignette, values_from = n, values_fill = 0)
+```
+
+Some status cells are small (particularly "Mixed" and "Declined both"), so
+their summaries should be read with caution.
+
+### Whole sample
+
+Pooled across all three vignettes. Each participant contributes up to three
+observations, so these are not independent.
+
+```{r}
+#| label: desc-overall
+
+describe_outcomes(outcomes)
+```
+
+### By vignette
+
+```{r}
+#| label: desc-vignette
+
+describe_outcomes(outcomes, vignette)
+```
+
+### By condition
+
+Condition is the randomised manipulation: **Asked** (condition A, consent
+requested before MedHelper acted) vs. **Not asked** (condition B, informed
+afterwards). Unlike consent status, it does not depend on participants'
+choices. Condition varied across vignettes within participants, so most people
+appear in both groups.
+
+```{r}
+#| label: desc-condition
+
+describe_outcomes(outcomes, condition)
+```
+
+By vignette:
+
+```{r}
+#| label: desc-vignette-condition
+
+describe_outcomes(outcomes, vignette, condition)
+```
+
+Compact layout (mean (SD), n), with the Asked − Not asked difference in means:
+
+```{r}
+#| label: desc-vignette-condition-wide
+
+condition_by_vignette <- bind_rows(
+  describe_outcomes(outcomes, condition) |> mutate(vignette = "All"),
+  describe_outcomes(outcomes, vignette, condition)
+) |>
+  mutate(vignette = fct_relevel(as.character(vignette), "All", after = Inf))
+
+condition_by_vignette |>
+  mutate(value = glue::glue("{format(mean, nsmall = 2)} ({format(sd, nsmall = 2)}), n={n}")) |>
+  select(measure, vignette, condition, value) |>
+  pivot_wider(names_from = condition, values_from = value) |>
+  left_join(
+    condition_by_vignette |>
+      select(measure, vignette, condition, mean) |>
+      pivot_wider(names_from = condition, values_from = mean) |>
+      mutate(diff = Asked - `Not asked`, .keep = "unused"),
+    by = join_by(measure, vignette)
+  ) |>
+  arrange(measure, vignette)
+```
+
+Each participant's sequence of conditions across the three vignettes:
+
+```{r}
+#| label: condition-sequence
+
+outcomes |>
+  mutate(cond = if_else(condition == "Asked", "A", "B")) |>
+  summarise(sequence = str_flatten(cond[order(vignette)]), .by = ResponseId) |>
+  count(sequence)
+```
+
+```{r}
+#| label: plot-condition
+#| fig-width: 8
+#| fig-height: 6
+
+outcomes |>
+  pivot_longer(
+    c(trust_score, accept_score, satisfaction),
+    names_to = "measure",
+    values_to = "value"
+  ) |>
+  mutate(
+    measure = factor(
+      measure,
+      levels = c("trust_score", "accept_score", "satisfaction"),
+      labels = c("Trust", "Acceptance", "Satisfaction")
+    )
+  ) |>
+  ggplot(aes(x = condition, y = value)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(width = 0.15, height = 0.05, alpha = 0.4) +
+  facet_grid(measure ~ vignette) +
+  scale_y_continuous(limits = c(0.9, 5.1), breaks = 1:5) +
+  labs(x = NULL, y = "Score (1–5)")
+```
+
+### By consent status
+
+Pooled across vignettes.
+
+```{r}
+#| label: desc-status
+
+describe_outcomes(outcomes, status)
+```
+
+### By vignette and consent status
+
+```{r}
+#| label: desc-vignette-status
+
+describe_outcomes(outcomes, vignette, status)
+```
+
+Means in a compact wide layout (mean (SD), n):
+
+```{r}
+#| label: desc-vignette-status-wide
+
+describe_outcomes(outcomes, vignette, status) |>
+  mutate(value = glue::glue("{format(mean, nsmall = 2)} ({format(sd, nsmall = 2)}), n={n}")) |>
+  select(measure, status, vignette, value) |>
+  pivot_wider(names_from = vignette, values_from = value)
+```
+
+## Correlations among outcomes
+
+Pearson correlations are shown with 95% CIs (Fisher z); Spearman correlations
+are included because satisfaction is a single ordinal item.
+
+### By vignette
+
+Each vignette has one observation per participant, so these are ordinary
+between-participant correlations.
+
+```{r}
+#| label: cor-vignette
+
+cor_vignette <- cor_outcomes(outcomes, vignette)
+cor_vignette
+
+cor_vignette |>
+  mutate(value = glue::glue("{format(pearson, nsmall = 2)} / {format(spearman, nsmall = 2)}")) |>
+  select(pair, vignette, value) |>
+  pivot_wider(names_from = vignette, values_from = value)
+```
+
+The wide table shows Pearson / Spearman.
+
+### By vignette and condition
+
+Within each vignette, the Asked and Not asked groups are different
+participants, so the two correlations are independent. Cells have about 29
+participants, so the CIs are wide and a difference between conditions would
+need to be large to be distinguishable.
+
+```{r}
+#| label: cor-vignette-condition
+
+cor_condition <- cor_outcomes(outcomes, vignette, condition)
+cor_condition
+```
+
+```{r}
+#| label: plot-cor-condition
+#| fig-width: 8
+#| fig-height: 4
+
+ggplot(
+  cor_condition,
+  aes(x = pearson, y = fct_rev(condition), xmin = conf_low, xmax = conf_high)
+) +
+  geom_pointrange() +
+  facet_grid(vignette ~ pair) +
+  labs(x = "Pearson r (95% CI)", y = NULL)
+```
+
+### Between- and within-person correlations
+
+Each participant rated all three vignettes, so the pooled association between
+two outcomes mixes two things:
+
+- **Between-person**: do participants who are generally more trusting also
+  tend to be more accepting/satisfied? Computed from each participant's mean
+  across the three vignettes (n = participants).
+- **Within-person**: when a participant rates a vignette higher than their own
+  average on one measure, do they also rate it higher on the other? Computed as
+  a repeated-measures correlation with `rmcorr::rmcorr()` (Bakdash & Marusich,
+  2017), with df = N − k − 1 (N observations, k participants).
+
+Within-person variation includes differences between vignettes and conditions,
+so the within-person correlation reflects how the measures move together
+across those changes.
+
+```{r}
+#| label: cor-between-within
+
+person_means <- outcomes |>
+  summarise(
+    across(c(trust_score, accept_score, satisfaction), mean),
+    .by = ResponseId
+  )
+
+cor_levels <- bind_rows(
+  cor_outcomes(outcomes) |> mutate(level = "Pooled (all observations)"),
+  cor_outcomes(person_means) |> mutate(level = "Between-person"),
+  rmcorr_outcomes(outcomes, id = "ResponseId") |> mutate(level = "Within-person")
+) |>
+  mutate(
+    level = factor(
+      level,
+      levels = c("Pooled (all observations)", "Between-person", "Within-person")
+    )
+  ) |>
+  relocate(level)
+
+cor_levels
+```
+
+`k` (participants) and `p_value` are only reported for the within-person
+correlations; Spearman is only reported for the others.
+
+The pooled row treats the 3 observations per participant as independent, so
+its CI is too narrow; it is shown only for comparison.
+
+```{r}
+#| label: plot-cor-between-within
+#| fig-width: 7
+#| fig-height: 5
+
+ggplot(
+  cor_levels,
+  aes(x = pearson, y = fct_rev(level), xmin = conf_low, xmax = conf_high)
+) +
+  geom_pointrange() +
+  facet_wrap(vars(pair), ncol = 1) +
+  labs(x = "Pearson r (95% CI)", y = NULL)
+```
+
+### Within-person correlations by condition order
+
+Participants saw one of six condition orders across V1–V3 (e.g. `ABA` = asked
+in V1, not asked in V2, asked in V3). Within an order, every participant gets
+the same vignette/condition combinations, so within-person variation reflects
+the same sequence of changes for everyone in that group.
+
+Each order has only about 9–11 participants (df ≈ 2k − 1 ≈ 17–21), so these
+CIs are wide. Treat differences between orders as descriptive only.
+
+```{r}
+#| label: cor-within-order
+
+condition_orders <- outcomes |>
+  mutate(cond = if_else(condition == "Asked", "A", "B")) |>
+  summarise(cond_order = str_flatten(cond[order(vignette)]), .by = ResponseId)
+
+cor_order <- outcomes |>
+  left_join(condition_orders, by = join_by(ResponseId)) |>
+  rmcorr_outcomes(cond_order, id = "ResponseId")
+
+cor_order
+```
+
+```{r}
+#| label: plot-cor-within-order
+#| fig-width: 8
+#| fig-height: 4
+
+ggplot(
+  cor_order,
+  aes(x = pearson, y = fct_rev(cond_order), xmin = conf_low, xmax = conf_high)
+) +
+  geom_pointrange() +
+  geom_vline(
+    data = filter(cor_levels, level == "Within-person"),
+    aes(xintercept = pearson),
+    linetype = "dashed"
+  ) +
+  facet_wrap(vars(pair)) +
+  scale_x_continuous(breaks = c(0, 0.5, 1)) +
+  labs(
+    x = "Within-person r (95% CI)",
+    y = "Condition order (V1–V3)",
+    caption = "Dashed line: within-person r across all participants"
+  )
+```
+
+### Satisfaction response distribution
+
+Satisfaction is a single ordinal item, so the full response distribution is
+shown alongside the mean.
+
+```{r}
+#| label: satisfaction-dist
+
+likert_levels <- c(
+  "Strongly disagree", "Disagree", "Neutral", "Agree", "Strongly agree"
+)
+
+outcomes |>
+  mutate(satisfaction = factor(satisfaction, levels = 1:5, labels = likert_levels)) |>
+  count(vignette, status, satisfaction, .drop = FALSE) |>
+  mutate(pct = round(100 * n / sum(n), 1), .by = c(vignette, status)) |>
+  mutate(value = glue::glue("{n} ({pct}%)")) |>
+  select(-n, -pct) |>
+  pivot_wider(names_from = satisfaction, values_from = value)
+```
+
+### Distributions
+
+```{r}
+#| label: plot-outcomes
+#| fig-width: 9
+#| fig-height: 7
+
+outcomes |>
+  pivot_longer(
+    c(trust_score, accept_score, satisfaction),
+    names_to = "measure",
+    values_to = "value"
+  ) |>
+  mutate(
+    measure = factor(
+      measure,
+      levels = c("trust_score", "accept_score", "satisfaction"),
+      labels = c("Trust", "Acceptance", "Satisfaction")
+    )
+  ) |>
+  ggplot(aes(x = status, y = value)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(width = 0.15, height = 0.05, alpha = 0.4) +
+  facet_grid(measure ~ vignette) +
+  scale_y_continuous(limits = c(0.9, 5.1), breaks = 1:5) +
+  labs(x = NULL, y = "Score (1–5)") +
+  theme(axis.text.x = element_text(angle = 30, hjust = 1))
+```

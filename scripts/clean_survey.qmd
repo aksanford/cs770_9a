@@ -180,6 +180,44 @@ data <- data |>
   select(-seq, -matches("^v[1-3]_(accept|trust|distrust)\\d$"))
 ```
 
+## Code field of study
+
+`demo_field` is free text. `demo_field_cat` groups it into broad categories by
+keyword. Rules are applied in order, so e.g. "Marketing (work) Clinical
+Psychology (study)" is coded as Psychology. Non-answers ("None", "n/a", and a
+comment about AI tools) are set to `NA`. The original text is kept.
+
+```{r}
+#| label: code-field
+
+data <- data |>
+  mutate(
+    field_lower = str_to_lower(str_squish(demo_field)),
+    demo_field_cat = case_when(
+      is.na(field_lower) | field_lower %in% c("none", "n/a") ~ NA,
+      str_starts(field_lower, "i have used these tools") ~ NA,
+      str_detect(field_lower, "psych|dshb|human behavior") ~ "Psychology",
+      # "engin" also catches the "Engineeing" typo
+      str_detect(field_lower, "engin|\\bece\\b|computer|software") ~ "Engineering / CS",
+      str_detect(
+        field_lower,
+        "epidemiology|public health|surgery|health services|speech|communication sciences"
+      ) ~ "Health sciences",
+      str_detect(field_lower, "biolog|biotech|animal") ~ "Life sciences",
+      str_detect(field_lower, "sociolog|social work") ~ "Social sciences",
+      str_detect(field_lower, "^art$|design|film") ~ "Arts & design",
+      str_detect(field_lower, "retire|unemployed|disability") ~ "Not currently working",
+      .default = "Other"
+    ),
+    .after = demo_field
+  ) |>
+  select(-field_lower)
+
+data |>
+  count(demo_field_cat, demo_field) |>
+  arrange(demo_field_cat)
+```
+
 ## Reorder columns
 
 Identifiers first, then one block per vignette (consent status, outcome
