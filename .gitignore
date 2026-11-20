@@ -22,7 +22,13 @@ __pycache__/
 .venv/
 venv/
 
-# R
+# Quarto render output (regenerated on every render)
+.quarto/
+*_files/
+scripts/*.html
+
+# R (keep the .Rproj file; ignore per-user RStudio state)
 .Rhistory
 .RData
+.Ruserdata
 .Rproj.user/
