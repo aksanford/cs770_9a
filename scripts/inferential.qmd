@@ -1,0 +1,1486 @@
+---
+title: "Inferential Tests"
+format: html
+---
+
+## Setup
+
+```{r}
+#| label: setup
+#| message: false
+#| warning: false
+
+library(tidyverse)
+library(lmerTest)
+library(broom)
+source(here::here("scripts", "functions.R"))
+```
+
+## Hypotheses and analysis plan
+
+Overall hypothesis: trust, acceptance and satisfaction are **lower when
+participants were not asked for consent** (condition B) than when they were
+asked (condition A).
+
+| | Question | Analysis |
+|---|---|---|
+| H1a | Between-person effect of condition, separately for each vignette | Welch t-test per vignette × outcome (Wilcoxon rank-sum as a check) |
+| H1b | Within-person effect of condition (A vs. B across a participant's three vignettes) | Linear mixed model with condition split into within- and between-person parts, vignette as a fixed effect, random intercept per participant |
+| H1b follow-up | Does the condition effect differ across vignettes? | H1b model plus a condition × vignette interaction |
+| H1b follow-up | Are the within-person effects negligible? | Equivalence tests (TOST) on the H1b estimates |
+| H1b follow-up | Does the previous vignette's condition carry over? | H1b model on V2–V3 with the previous vignette's condition added |
+| H2 | Do trust and acceptance predict satisfaction? | Linear mixed model with trust and acceptance split into within- and between-person parts |
+| Exploratory | Among Asked vignettes, do ratings differ by consent decision? | Mixed model with consent decision (consented to both / mixed / declined both), plus a check of the same participants' Not asked ratings |
+| Exploratory | Is the decision gap larger in Asked than Not asked vignettes? | Mixed model with participant consent rate × condition |
+| Exploratory | Is Not asked closer to consenters than to decliners? | Absolute-gap contrast at the group level (cluster-robust SEs) and relative to each participant's own Not asked baseline |
+| Exploratory | Is the own-baseline decline effect concentrated in V3? | Own-baseline model with decision × vignette; refits without V3, without participants whose decision changed, and without the random intercept |
+
+Conventions:
+
+- Condition effects are coded as **Not asked − Asked**, so a negative estimate
+  is in the hypothesised direction.
+- Tests are two-sided at α = .05. The hypothesis is directional, but two-sided
+  tests are more conservative; for an estimate in the predicted direction the
+  one-sided p is half the two-sided p.
+- Holm correction is applied within each family of tests (the 9 H1a tests;
+  the 3 H1b tests; the 3 interaction tests). The follow-up analyses are
+  secondary checks on H1b and are interpreted descriptively.
+- Satisfaction is a single 1–5 item, so H1b and H2 are repeated with
+  cumulative link mixed models (ordinal regression) as a sensitivity check.
+
+## Load data
+
+The same panel as `descriptives.qmd`: participants who answered at least one
+vignette. Data are reshaped to one row per participant per vignette.
+
+```{r}
+#| label: load-data
+
+panel <- read_csv(here::here("data", "data_clean.csv"), show_col_types = FALSE) |>
+  filter(if_any(matches("^v[1-3]_status1$"), \(x) !is.na(x)))
+
+outcomes <- panel |>
+  pivot_vignettes_long() |>
+  mutate(
+    vignette = factor(vignette, labels = paste0("V", 1:3)),
+    condition = factor(
+      if_else(status1 == "Was not asked for consent", "Not asked", "Asked"),
+      levels = c("Asked", "Not asked")
+    )
+  ) |>
+  select(ResponseId, vignette, condition, trust_score, accept_score, satisfaction)
+
+outcome_labels <- c(
+  trust_score = "Trust",
+  accept_score = "Acceptance",
+  satisfaction = "Satisfaction"
+)
+
+outcomes |>
+  count(vignette, condition) |>
+  pivot_wider(names_from = condition, values_from = n)
+
+outcomes |>
+  summarise(across(everything(), \(x) sum(is.na(x))))
+```
+
+## H1a: Between-person effect of condition, by vignette
+
+Within each vignette, different participants were in the Asked and Not asked
+conditions, so these are independent-groups comparisons. Welch's t-test is
+used because it does not assume equal variances. The outcomes are bounded 1–5
+scores; with about 29 per group the t-test is reasonably robust to their
+non-normality, and the Wilcoxon rank-sum test is reported as a check
+(particularly for satisfaction, a single ordinal item).
+
+Effect sizes are Hedges' g (Not asked − Asked, using an unpooled SD to match
+Welch).
+
+```{r}
+#| label: h1a
+
+h1a <- outcomes |>
+  # Put "Not asked" first so estimates are Not asked − Asked
+  mutate(condition = fct_relevel(condition, "Not asked")) |>
+  pivot_longer(names(outcome_labels), names_to = "measure", values_to = "value") |>
+  mutate(measure = factor(outcome_labels[measure], levels = outcome_labels)) |>
+  nest(.by = c(measure, vignette)) |>
+  mutate(
+    welch = map(data, \(d) tidy(t.test(value ~ condition, data = d))),
+    g = map(data, \(d) {
+      effectsize::hedges_g(value ~ condition, data = d, pooled_sd = FALSE) |>
+        as_tibble()
+    }),
+    wilcox_p = map_dbl(data, \(d) {
+      wilcox.test(value ~ condition, data = d, exact = FALSE)$p.value
+    })
+  ) |>
+  select(-data) |>
+  unnest(welch) |>
+  unnest(g, names_sep = "_") |>
+  transmute(
+    measure, vignette,
+    diff = estimate, conf_low = conf.low, conf_high = conf.high,
+    t = statistic, df = parameter, p = p.value,
+    g = g_Hedges_g, g_low = g_CI_low, g_high = g_CI_high,
+    wilcox_p
+  ) |>
+  mutate(
+    p_holm = p.adjust(p, "holm"),
+    wilcox_p_holm = p.adjust(wilcox_p, "holm")
+  )
+
+h1a |>
+  mutate(across(where(is.double), \(x) round(x, 3)))
+```
+
+```{r}
+#| label: plot-h1a
+#| fig-width: 8
+#| fig-height: 4
+
+ggplot(h1a, aes(x = diff, y = fct_rev(vignette), xmin = conf_low, xmax = conf_high)) +
+  geom_vline(xintercept = 0, linetype = "dashed") +
+  geom_pointrange() +
+  facet_wrap(vars(measure)) +
+  labs(
+    x = "Not asked − Asked (scale points, 95% CI)",
+    y = NULL,
+    caption = "Negative values are in the hypothesised direction"
+  )
+```
+
+How large a difference could these comparisons reliably detect? With about 29
+per group, a two-sided t-test at α = .05 has 80% power only for a
+standardised difference of:
+
+```{r}
+#| label: h1a-power
+
+power.t.test(n = 29, power = 0.8, sd = 1, sig.level = 0.05)$delta
+```
+
+## H1b: Within-person effect of condition
+
+Every participant saw both conditions (two vignettes in one, one in the
+other). The condition indicator (`not_asked` = 1 for Not asked) is split into:
+
+- `not_asked_w`: the participant's deviation from their own mean, i.e. the
+  **within-person** effect of being in the Not asked condition for a given
+  vignette compared with that participant's other vignettes.
+- `not_asked_pm`: the participant's proportion of Not asked vignettes (1/3 or
+  2/3). This between-person part is confounded with the condition order and is
+  included only so that `not_asked_w` is a pure within-person estimate.
+
+Vignette is a fixed effect, so differences between vignettes (which also
+reflect their presentation order) are not attributed to condition. With three
+observations per participant, only a random intercept is estimated.
+
+```{r}
+#| label: h1b
+
+mm_data <- outcomes |>
+  mutate(
+    not_asked = as.integer(condition == "Not asked"),
+    not_asked_pm = mean(not_asked),
+    .by = ResponseId
+  ) |>
+  mutate(not_asked_w = not_asked - not_asked_pm)
+
+fit_cond <- map(names(outcome_labels), \(y) {
+  lmer(
+    reformulate(c("not_asked_w", "not_asked_pm", "vignette", "(1 | ResponseId)"), y),
+    data = mm_data
+  )
+}) |>
+  set_names(outcome_labels)
+
+h1b_all <- imap(fit_cond, \(m, nm) {
+  broom.mixed::tidy(m, effects = "fixed", conf.int = TRUE) |>
+    mutate(measure = nm, .before = 1)
+}) |>
+  list_rbind()
+
+h1b <- h1b_all |>
+  filter(term == "not_asked_w") |>
+  mutate(
+    p_holm = p.adjust(p.value, "holm"),
+    # Approximate standardised effect: estimate / total SD of the outcome
+    d = estimate / map_dbl(names(outcome_labels), \(y) sd(mm_data[[y]]))
+  ) |>
+  select(measure, estimate, std.error, conf.low, conf.high, df, statistic,
+         p.value, p_holm, d)
+
+h1b |>
+  mutate(across(where(is.double), \(x) round(x, 3)))
+```
+
+Full fixed effects, for reference:
+
+```{r}
+#| label: h1b-full
+
+h1b_all |>
+  select(measure, term, estimate, std.error, conf.low, conf.high, df, p.value) |>
+  mutate(across(where(is.double), \(x) round(x, 3)))
+```
+
+Random-effect variances and singular-fit check:
+
+```{r}
+#| label: h1b-varcorr
+
+imap(fit_cond, \(m, nm) {
+  as_tibble(VarCorr(m)) |>
+    transmute(measure = nm, component = grp, variance = round(vcov, 3)) |>
+    mutate(singular = isSingular(m))
+}) |>
+  list_rbind()
+```
+
+## H1b follow-ups
+
+### Condition × vignette interaction
+
+Does the effect of not being asked differ between vignettes? The H1b model is
+extended with a `not_asked × vignette` interaction. `not_asked_pm` stays in the
+model, so the condition effects remain adjusted for each participant's
+proportion of Not asked vignettes. The interaction is tested with a
+Satterthwaite F-test (2 df) for each outcome, Holm-corrected across the three
+outcomes.
+
+```{r}
+#| label: interaction
+
+fit_int <- map(names(outcome_labels), \(y) {
+  lmer(
+    reformulate(
+      c("not_asked_pm", "not_asked * vignette", "(1 | ResponseId)"),
+      y
+    ),
+    data = mm_data
+  )
+}) |>
+  set_names(outcome_labels)
+
+int_tests <- imap(fit_int, \(m, nm) {
+  a <- anova(m)["not_asked:vignette", ]
+  tibble(
+    measure = nm,
+    F = a[["F value"]],
+    num_df = a[["NumDF"]],
+    den_df = a[["DenDF"]],
+    p = a[["Pr(>F)"]]
+  )
+}) |>
+  list_rbind() |>
+  mutate(p_holm = p.adjust(p, "holm"))
+
+int_tests |>
+  mutate(across(where(is.double), \(x) round(x, 3)))
+```
+
+Condition effect (Not asked − Asked) within each vignette from the
+interaction models, with unadjusted 95% CIs. These are shown to describe the
+pattern; with 9 estimates, one or two nominally significant results would not
+be surprising by chance.
+
+```{r}
+#| label: interaction-slopes
+
+int_slopes <- imap(fit_int, \(m, nm) {
+  emmeans::emtrends(m, ~ vignette, var = "not_asked", lmer.df = "satterthwaite") |>
+    summary(infer = TRUE) |>
+    as_tibble() |>
+    mutate(measure = nm, .before = 1)
+}) |>
+  list_rbind() |>
+  rename(
+    estimate = not_asked.trend, std_error = SE,
+    conf_low = lower.CL, conf_high = upper.CL, t = t.ratio, p = p.value
+  ) |>
+  mutate(measure = factor(measure, levels = outcome_labels))
+
+int_slopes |>
+  mutate(across(where(is.double), \(x) round(x, 3)))
+```
+
+```{r}
+#| label: plot-interaction
+#| fig-width: 8
+#| fig-height: 4
+
+ggplot(
+  int_slopes,
+  aes(x = estimate, y = fct_rev(vignette), xmin = conf_low, xmax = conf_high)
+) +
+  geom_vline(xintercept = 0, linetype = "dashed") +
+  geom_pointrange() +
+  facet_wrap(vars(measure)) +
+  labs(
+    x = "Not asked − Asked (scale points, 95% CI)",
+    y = NULL,
+    caption = "Negative values are in the hypothesised direction"
+  )
+```
+
+These per-vignette estimates differ from the raw H1a differences because the
+model also uses each participant's ratings of the other vignettes to adjust
+for their overall level.
+
+### Equivalence tests (TOST)
+
+A non-significant result does not show that an effect is absent. Two one-sided
+tests (TOST) check whether the within-person effect from H1b is smaller than
+an equivalence bound ±Δ: equivalence is declared at α = .05 when the 90% CI
+lies entirely inside (−Δ, Δ). The tests use the H1b estimates, standard
+errors and Satterthwaite df.
+
+No smallest effect size of interest (SESOI) was pre-specified, so two things are
+reported:
+
+1. The **smallest bound** at which each effect would be declared equivalent
+   (the larger absolute end of the 90% CI), in scale points and SD units.
+2. TOST p-values for several candidate bounds: ±0.25 and ±0.5 scale points
+   (a quarter and half of one response option) and ±0.2 and ±0.5 SD (Cohen's
+   small and medium).
+
+The SESOI should ideally be chosen on substantive grounds before looking at
+these results.
+
+```{r}
+#| label: tost
+
+tost_p <- function(est, se, df, bound) {
+  p_lower <- pt((est + bound) / se, df, lower.tail = FALSE)
+  p_upper <- pt((est - bound) / se, df)
+  pmax(p_lower, p_upper)
+}
+
+h1b_tost <- h1b |>
+  mutate(
+    sd_y = map_dbl(names(outcome_labels), \(y) sd(mm_data[[y]])),
+    ci90_low = estimate - qt(0.95, df) * std.error,
+    ci90_high = estimate + qt(0.95, df) * std.error,
+    min_bound = pmax(abs(ci90_low), abs(ci90_high)),
+    min_bound_sd = min_bound / sd_y
+  )
+
+h1b_tost |>
+  select(measure, estimate, ci90_low, ci90_high, min_bound, min_bound_sd) |>
+  mutate(across(where(is.double), \(x) round(x, 3)))
+
+tost_bounds <- tibble(
+  bound_label = c("±0.25 points", "±0.5 points", "±0.2 SD", "±0.5 SD"),
+  in_sd = c(FALSE, FALSE, TRUE, TRUE),
+  value = c(0.25, 0.5, 0.2, 0.5)
+)
+
+tost_grid <- cross_join(h1b_tost, tost_bounds) |>
+  mutate(
+    bound = if_else(in_sd, value * sd_y, value),
+    p_tost = tost_p(estimate, std.error, df, bound),
+    equivalent = p_tost < 0.05
+  ) |>
+  select(measure, bound_label, bound, p_tost, equivalent)
+
+tost_grid |>
+  mutate(bound = round(bound, 3), p_tost = signif(p_tost, 3))
+```
+
+### Carryover from the previous vignette
+
+Could being asked (or not) in one vignette affect ratings of the next? For V2
+and V3, `prev_not_asked` is the condition of the preceding vignette (V1 has no
+predecessor, so it is excluded). The H1b model is refitted on V2–V3 with the
+current and previous condition. `not_asked_pm` (computed over all three
+vignettes) is kept so the condition effects remain within-person.
+
+```{r}
+#| label: carryover
+
+carry_data <- mm_data |>
+  arrange(ResponseId, vignette) |>
+  mutate(prev_not_asked = lag(not_asked), .by = ResponseId) |>
+  filter(!is.na(prev_not_asked))
+
+carry_data |>
+  count(vignette, not_asked, prev_not_asked)
+
+fit_carry <- map(names(outcome_labels), \(y) {
+  lmer(
+    reformulate(
+      c("not_asked", "prev_not_asked", "not_asked_pm", "vignette", "(1 | ResponseId)"),
+      y
+    ),
+    data = carry_data
+  )
+}) |>
+  set_names(outcome_labels)
+
+carryover <- imap(fit_carry, \(m, nm) {
+  broom.mixed::tidy(m, effects = "fixed", conf.int = TRUE) |>
+    mutate(measure = nm, .before = 1)
+}) |>
+  list_rbind() |>
+  filter(term %in% c("not_asked", "prev_not_asked"))
+
+carryover |>
+  select(measure, term, estimate, std.error, conf.low, conf.high, df, p.value) |>
+  mutate(across(where(is.double), \(x) round(x, 3)))
+```
+
+Most participants switched condition between consecutive vignettes, so
+`not_asked` and `prev_not_asked` are negatively correlated, which widens both
+CIs:
+
+```{r}
+#| label: carryover-cor
+
+cor(carry_data$not_asked, carry_data$prev_not_asked)
+```
+
+Does the effect of the current condition depend on the previous one (e.g. a
+contrast effect when switching from Asked to Not asked)?
+
+```{r}
+#| label: carryover-interaction
+
+imap(fit_carry, \(m, nm) {
+  a <- anova(update(m, . ~ . + not_asked:prev_not_asked))["not_asked:prev_not_asked", ]
+  tibble(measure = nm, F = a[["F value"]], den_df = a[["DenDF"]], p = a[["Pr(>F)"]])
+}) |>
+  list_rbind() |>
+  mutate(across(where(is.double), \(x) round(x, 3)))
+```
+
+## H2: Do trust and acceptance predict satisfaction?
+
+Trust and acceptance are each split into a person mean (`*_pm`, the
+**between-person** part: do people who are generally more trusting report
+higher satisfaction?) and a deviation from that mean (`*_w`, the
+**within-person** part: when a participant trusts MedHelper more in one
+vignette than usual, are they also more satisfied?). Condition and vignette
+are included as covariates.
+
+Three models are fitted: trust alone, acceptance alone, and both together.
+Trust and acceptance are strongly correlated (see `descriptives.qmd`), so the
+joint model shows each one's unique contribution, and collinearity is checked.
+
+These are associations between ratings given at the same time by the same
+person; they do not establish that trust or acceptance causes satisfaction.
+
+```{r}
+#| label: h2
+
+h2_data <- mm_data |>
+  mutate(
+    trust_pm = mean(trust_score),
+    accept_pm = mean(accept_score),
+    .by = ResponseId
+  ) |>
+  mutate(
+    trust_w = trust_score - trust_pm,
+    accept_w = accept_score - accept_pm
+  )
+
+fit_h2 <- list(
+  `Trust only` = lmer(
+    satisfaction ~ trust_w + trust_pm + not_asked + vignette + (1 | ResponseId),
+    data = h2_data
+  ),
+  `Acceptance only` = lmer(
+    satisfaction ~ accept_w + accept_pm + not_asked + vignette + (1 | ResponseId),
+    data = h2_data
+  ),
+  `Both` = lmer(
+    satisfaction ~ trust_w + trust_pm + accept_w + accept_pm + not_asked +
+      vignette + (1 | ResponseId),
+    data = h2_data
+  )
+)
+
+h2 <- imap(fit_h2, \(m, nm) {
+  broom.mixed::tidy(m, effects = "fixed", conf.int = TRUE) |>
+    mutate(model = nm, .before = 1)
+}) |>
+  list_rbind() |>
+  mutate(model = fct_inorder(model))
+
+h2 |>
+  filter(str_detect(term, "trust|accept")) |>
+  select(model, term, estimate, std.error, conf.low, conf.high, df, p.value) |>
+  mutate(across(where(is.double), \(x) signif(x, 3)))
+```
+
+Estimates are in scale points: e.g. `accept_w` is the change in satisfaction
+for a 1-point increase in acceptance relative to the participant's own
+average.
+
+Variance explained (Nakagawa's R²; marginal = fixed effects only,
+conditional = including the participant random intercept):
+
+```{r}
+#| label: h2-r2
+
+imap(fit_h2, \(m, nm) {
+  r2 <- performance::r2_nakagawa(m)
+  tibble(
+    model = nm,
+    r2_marginal = r2$R2_marginal,
+    r2_conditional = r2$R2_conditional
+  )
+}) |>
+  list_rbind() |>
+  mutate(across(where(is.double), \(x) round(x, 3)))
+```
+
+Collinearity in the joint model:
+
+```{r}
+#| label: h2-collinearity
+
+performance::check_collinearity(fit_h2$Both)
+```
+
+## Exploratory: consent decision among Asked participants
+
+This analysis was not part of the original hypotheses. In the Asked
+condition, participants answered two consent requests per vignette. Their
+decision is coded as:
+
+- **Consented to both** (reference group)
+- **Mixed**: consented to one request, declined the other
+- **Declined both**
+
+Participants chose their answers, so differences between these groups describe
+who made which choice; they are not effects of consenting. A participant's
+decision may itself reflect how much they already trusted MedHelper.
+
+```{r}
+#| label: decision-data
+
+asked <- outcomes |>
+  filter(condition == "Asked") |>
+  left_join(
+    panel |>
+      pivot_vignettes_long() |>
+      mutate(vignette = factor(vignette, labels = paste0("V", 1:3))) |>
+      select(ResponseId, vignette, status1, status2),
+    by = join_by(ResponseId, vignette)
+  ) |>
+  mutate(
+    n_consent = (status1 == "Consented to MedHelper") +
+      (status2 == "Consented to MedHelper"),
+    decision = factor(
+      n_consent,
+      levels = 2:0,
+      labels = c("Consented to both", "Mixed", "Declined both")
+    )
+  )
+
+asked |>
+  summarise(observations = n(), participants = n_distinct(ResponseId), .by = decision) |>
+  arrange(decision)
+
+# Participants with two Asked vignettes: did their decision change?
+asked |>
+  summarise(
+    asked_vignettes = n(),
+    distinct_decisions = n_distinct(decision),
+    .by = ResponseId
+  ) |>
+  count(asked_vignettes, distinct_decisions)
+```
+
+Few participants made different decisions across their Asked vignettes, so the
+comparison below is almost entirely between people.
+
+### Ratings by consent decision
+
+Linear mixed model per outcome on the Asked rows, with vignette as a fixed
+effect and a random intercept per participant. The overall decision effect is
+tested with a Satterthwaite F-test (Holm-corrected across outcomes); each
+group is then compared with "Consented to both" (Holm-adjusted within outcome;
+the CIs use the matching Bonferroni adjustment).
+
+```{r}
+#| label: decision-models
+
+fit_dec <- map(names(outcome_labels), \(y) {
+  lmer(reformulate(c("decision", "vignette", "(1 | ResponseId)"), y), data = asked)
+}) |>
+  set_names(outcome_labels)
+
+dec_omnibus <- imap(fit_dec, \(m, nm) {
+  a <- anova(m)["decision", ]
+  tibble(
+    measure = nm,
+    F = a[["F value"]],
+    num_df = a[["NumDF"]],
+    den_df = a[["DenDF"]],
+    p = a[["Pr(>F)"]]
+  )
+}) |>
+  list_rbind() |>
+  mutate(p_holm = p.adjust(p, "holm"))
+
+dec_omnibus |>
+  mutate(across(where(is.double), \(x) signif(x, 3)))
+
+dec_contrasts <- imap(fit_dec, \(m, nm) {
+  emmeans::emmeans(m, ~ decision, lmer.df = "satterthwaite") |>
+    emmeans::contrast("trt.vs.ctrl", ref = 1, adjust = "holm") |>
+    summary(infer = TRUE) |>
+    as_tibble() |>
+    mutate(measure = nm, .before = 1)
+}) |>
+  list_rbind() |>
+  select(
+    measure, contrast, estimate, std_error = SE, df,
+    conf_low = lower.CL, conf_high = upper.CL, p = p.value
+  ) |>
+  mutate(measure = factor(measure, levels = outcome_labels))
+
+dec_contrasts |>
+  mutate(across(where(is.double), \(x) signif(x, 3)))
+```
+
+```{r}
+#| label: plot-decision
+#| fig-width: 8
+#| fig-height: 3.5
+
+ggplot(
+  dec_contrasts,
+  aes(x = estimate, y = fct_rev(contrast), xmin = conf_low, xmax = conf_high)
+) +
+  geom_vline(xintercept = 0, linetype = "dashed") +
+  geom_pointrange() +
+  facet_wrap(vars(measure)) +
+  labs(x = "Difference from Consented to both (scale points, adjusted 95% CI)", y = NULL)
+```
+
+As a single-df alternative, the number of consents given (0, 1 or 2) as a
+linear predictor:
+
+```{r}
+#| label: decision-trend
+
+fit_dec_trend <- map(names(outcome_labels), \(y) {
+  lmer(reformulate(c("n_consent", "vignette", "(1 | ResponseId)"), y), data = asked)
+}) |>
+  set_names(outcome_labels)
+
+imap(fit_dec_trend, \(m, nm) {
+  broom.mixed::tidy(m, effects = "fixed", conf.int = TRUE) |>
+    mutate(measure = nm, .before = 1)
+}) |>
+  list_rbind() |>
+  filter(term == "n_consent") |>
+  select(measure, estimate, std.error, conf.low, conf.high, df, p.value) |>
+  mutate(across(where(is.double), \(x) signif(x, 3)))
+```
+
+Ordinal check for satisfaction (log-odds scale; negative = lower
+satisfaction than Consented to both):
+
+```{r}
+#| label: decision-ordinal
+
+clmm_dec <- ordinal::clmm(
+  factor(satisfaction, levels = 1:5, ordered = TRUE) ~ decision + vignette +
+    (1 | ResponseId),
+  data = asked,
+  nAGQ = 10
+)
+
+coef(summary(clmm_dec)) |>
+  as_tibble(rownames = "term") |>
+  filter(str_starts(term, "decision")) |>
+  mutate(across(where(is.double), \(x) signif(x, 3)))
+```
+
+### Is the decision a marker of pre-existing attitudes?
+
+If declining reflects a participant's general stance towards MedHelper, the
+same participants should also give lower ratings in vignettes where they were
+**not** asked, where no decision was made. Each participant's consent rate
+(proportion of consent requests accepted across their Asked vignettes, 0–1) is
+used to predict their Not asked ratings.
+
+```{r}
+#| label: decision-disposition
+
+person_consent <- asked |>
+  summarise(consent_rate = mean(n_consent) / 2, .by = ResponseId)
+
+not_asked_rows <- outcomes |>
+  filter(condition == "Not asked") |>
+  inner_join(person_consent, by = join_by(ResponseId))
+
+fit_disp <- map(names(outcome_labels), \(y) {
+  lmer(
+    reformulate(c("consent_rate", "vignette", "(1 | ResponseId)"), y),
+    data = not_asked_rows
+  )
+}) |>
+  set_names(outcome_labels)
+
+disposition <- imap(fit_disp, \(m, nm) {
+  broom.mixed::tidy(m, effects = "fixed", conf.int = TRUE) |>
+    mutate(measure = nm, singular = isSingular(m), .before = 1)
+}) |>
+  list_rbind() |>
+  filter(term == "consent_rate")
+
+disposition |>
+  select(measure, estimate, std.error, conf.low, conf.high, df, p.value, singular) |>
+  mutate(across(where(is.double), \(x) signif(x, 3)))
+```
+
+The estimate is the difference in Not asked ratings between a participant who
+accepted every consent request and one who declined every request. A singular
+fit means the participant random-intercept variance was estimated as zero
+(many participants have only one Not asked vignette), so that model reduces to
+ordinary regression with vignette as a covariate.
+
+### Is the decision gap larger when participants were asked?
+
+If the consent decision only marks a pre-existing stance, the gap between
+high- and low-consenting participants should be about the same in their Asked
+and Not asked vignettes. If being asked (and choosing) adds something, the gap
+should be larger in the Asked vignettes.
+
+This is tested with all vignettes in one model per outcome: the participant's
+consent rate × condition (`asked` = 1 for Asked), with `not_asked_pm` and
+vignette as covariates and a random intercept per participant. The
+`consent_rate:asked` interaction is the difference between the two gaps
+(Asked minus Not asked), in scale points for going from declining every
+request to accepting every request. Because each participant contributes to
+both conditions, this is largely a within-person comparison. Holm correction
+is applied across the three outcomes.
+
+The consent rate is the same person-level value in both conditions, so the
+Asked gap here can differ slightly from the vignette-specific decision
+contrasts above (10 participants made different decisions in their two Asked
+vignettes).
+
+```{r}
+#| label: decision-gap
+
+gap_data <- mm_data |>
+  inner_join(person_consent, by = join_by(ResponseId)) |>
+  mutate(asked = 1L - not_asked)
+
+fit_gap <- map(names(outcome_labels), \(y) {
+  lmer(
+    reformulate(
+      c("consent_rate * asked", "not_asked_pm", "vignette", "(1 | ResponseId)"),
+      y
+    ),
+    data = gap_data
+  )
+}) |>
+  set_names(outcome_labels)
+
+gap_slopes <- imap(fit_gap, \(m, nm) {
+  emmeans::emtrends(
+    m, ~ asked, var = "consent_rate",
+    at = list(asked = 0:1), lmer.df = "satterthwaite"
+  ) |>
+    summary(infer = TRUE) |>
+    as_tibble() |>
+    mutate(measure = nm, .before = 1)
+}) |>
+  list_rbind() |>
+  transmute(
+    measure = factor(measure, levels = outcome_labels),
+    condition = if_else(asked == 1, "Asked", "Not asked"),
+    gap = consent_rate.trend, conf_low = lower.CL, conf_high = upper.CL, p = p.value
+  )
+
+gap_slopes |>
+  mutate(across(where(is.double), \(x) signif(x, 3)))
+
+gap_interaction <- imap(fit_gap, \(m, nm) {
+  broom.mixed::tidy(m, effects = "fixed", conf.int = TRUE) |>
+    mutate(measure = nm, singular = isSingular(m), .before = 1)
+}) |>
+  list_rbind() |>
+  filter(term == "consent_rate:asked") |>
+  mutate(p_holm = p.adjust(p.value, "holm"))
+
+gap_interaction |>
+  select(measure, estimate, std.error, conf.low, conf.high, df, p.value, p_holm, singular) |>
+  mutate(across(where(is.double), \(x) signif(x, 3)))
+```
+
+```{r}
+#| label: plot-decision-gap
+#| fig-width: 8
+#| fig-height: 3
+
+ggplot(
+  gap_slopes,
+  aes(x = gap, y = fct_rev(condition), xmin = conf_low, xmax = conf_high)
+) +
+  geom_vline(xintercept = 0, linetype = "dashed") +
+  geom_pointrange() +
+  facet_wrap(vars(measure)) +
+  labs(
+    x = "Rating gap: accept all vs. decline all requests (scale points, 95% CI)",
+    y = NULL
+  )
+```
+
+Ordinal check for satisfaction (log-odds scale):
+
+```{r}
+#| label: decision-gap-ordinal
+
+clmm_gap <- ordinal::clmm(
+  factor(satisfaction, levels = 1:5, ordered = TRUE) ~
+    consent_rate * asked + not_asked_pm + vignette + (1 | ResponseId),
+  data = gap_data,
+  nAGQ = 10
+)
+
+coef(summary(clmm_gap)) |>
+  as_tibble(rownames = "term") |>
+  filter(term == "consent_rate:asked") |>
+  mutate(across(where(is.double), \(x) signif(x, 3)))
+```
+
+### Is Not asked closer to consenters than to decliners?
+
+This asks whether the gap between Not asked and "Declined both" ratings is
+larger than the gap between Not asked and "Consented to both" ratings. The
+two gaps share Not asked as their reference, so:
+
+- With **signed** gaps, (Declined − Not asked) − (Consented − Not asked)
+  reduces to Declined − Consented, which is tested above.
+- With **absolute** gaps, and given Consented ≥ Not asked ≥ Declined (checked
+  below), |Declined − Not asked| − |Consented − Not asked| =
+  2 × Not asked − Consented − Declined. A positive value means Not asked
+  ratings are closer to consenters than to decliners.
+
+It is answered in two ways:
+
+1. **Group level.** All 174 observations are classified by status (Not asked,
+   Consented to both, Mixed, Declined both) and compared as groups. A linear
+   model with vignette as a covariate is used, with cluster-robust (CR1)
+   standard errors by participant and df = participants − 1. A random-intercept
+   model is not used here because it would partly compare each person with
+   their own other ratings, blending this question with the next one.
+2. **Each participant's own baseline.** For each Asked observation, the
+   outcome is re-expressed as the difference from the same participant's mean
+   rating in their Not asked vignettes. These own-baseline gaps are compared
+   across decisions with a mixed model (vignette fixed effect, random intercept
+   per participant). Here, the "Consented gap" and "Declined gap" are the
+   estimated mean gaps for those decisions.
+
+Holm correction is applied across the three outcomes for each contrast.
+
+```{r}
+#| label: status-gap-group
+
+status_data <- mm_data |>
+  left_join(select(asked, ResponseId, vignette, decision), by = join_by(ResponseId, vignette)) |>
+  mutate(
+    status = if_else(condition == "Not asked", "Not asked", as.character(decision)),
+    status = factor(
+      status,
+      levels = c("Not asked", "Consented to both", "Mixed", "Declined both")
+    )
+  )
+
+status_data |>
+  count(status)
+
+n_clusters <- n_distinct(status_data$ResponseId)
+
+# Contrast weights over (Not asked, Consented to both, Mixed, Declined both)
+group_gap_contrasts <- list(
+  `Consented − Not asked` = c(-1, 1, 0, 0),
+  `Declined − Not asked` = c(-1, 0, 0, 1),
+  `|Declined gap| − |Consented gap|` = c(2, -1, 0, -1)
+)
+
+status_group <- map(names(outcome_labels), \(y) {
+  m <- lm(reformulate(c("status", "vignette"), y), data = status_data)
+  V <- sandwich::vcovCL(m, cluster = ~ ResponseId, type = "HC1")
+  emmeans::emmeans(m, ~ status, vcov. = V, df = n_clusters - 1)
+}) |>
+  set_names(outcome_labels)
+
+status_means <- imap(status_group, \(e, nm) {
+  summary(e) |>
+    as_tibble() |>
+    mutate(measure = nm, .before = 1)
+}) |>
+  list_rbind() |>
+  transmute(
+    measure = factor(measure, levels = outcome_labels),
+    status, mean = emmean, conf_low = lower.CL, conf_high = upper.CL
+  )
+
+status_means |>
+  mutate(across(where(is.double), \(x) round(x, 2)))
+
+# The absolute-gap contrast assumes Consented >= Not asked >= Declined
+status_means |>
+  select(measure, status, mean) |>
+  pivot_wider(names_from = status, values_from = mean) |>
+  mutate(ordering_holds = `Consented to both` >= `Not asked` & `Not asked` >= `Declined both`) |>
+  select(measure, ordering_holds)
+
+gap_group <- imap(status_group, \(e, nm) {
+  emmeans::contrast(e, group_gap_contrasts) |>
+    summary(infer = TRUE) |>
+    as_tibble() |>
+    mutate(measure = nm, .before = 1)
+}) |>
+  list_rbind() |>
+  mutate(p_holm = p.adjust(p.value, "holm"), .by = contrast) |>
+  select(
+    measure, contrast, estimate, std_error = SE, df,
+    conf_low = lower.CL, conf_high = upper.CL, p = p.value, p_holm
+  )
+
+gap_group |>
+  mutate(across(where(is.double), \(x) signif(x, 3)))
+```
+
+```{r}
+#| label: status-gap-own
+
+own_baseline <- outcomes |>
+  filter(condition == "Not asked") |>
+  summarise(
+    across(names(outcome_labels), mean, .names = "{.col}_base"),
+    .by = ResponseId
+  )
+
+own_gap_data <- asked |>
+  inner_join(own_baseline, by = join_by(ResponseId)) |>
+  mutate(
+    trust_score = trust_score - trust_score_base,
+    accept_score = accept_score - accept_score_base,
+    satisfaction = satisfaction - satisfaction_base
+  )
+
+# Observed mean own-baseline gaps
+own_gap_data |>
+  pivot_longer(names(outcome_labels), names_to = "measure", values_to = "gap") |>
+  mutate(measure = factor(outcome_labels[measure], levels = outcome_labels)) |>
+  summarise(mean_gap = round(mean(gap), 2), n = n(), .by = c(measure, decision)) |>
+  arrange(measure, decision)
+
+fit_own_gap <- map(names(outcome_labels), \(y) {
+  lmer(reformulate(c("decision", "vignette", "(1 | ResponseId)"), y), data = own_gap_data)
+}) |>
+  set_names(outcome_labels)
+
+# Contrast weights over (Consented to both, Mixed, Declined both)
+own_gap_contrasts <- list(
+  `Consented gap` = c(1, 0, 0),
+  `Declined gap` = c(0, 0, 1),
+  `|Declined gap| − |Consented gap|` = c(-1, 0, -1),
+  `Declined − Consented (signed)` = c(-1, 0, 1)
+)
+
+gap_own <- imap(fit_own_gap, \(m, nm) {
+  emmeans::emmeans(m, ~ decision, lmer.df = "satterthwaite") |>
+    emmeans::contrast(own_gap_contrasts) |>
+    summary(infer = TRUE) |>
+    as_tibble() |>
+    mutate(measure = nm, singular = isSingular(m), .before = 1)
+}) |>
+  list_rbind() |>
+  mutate(p_holm = p.adjust(p.value, "holm"), .by = contrast) |>
+  select(
+    measure, contrast, estimate, std_error = SE, df,
+    conf_low = lower.CL, conf_high = upper.CL, p = p.value, p_holm, singular
+  )
+
+gap_own |>
+  mutate(across(where(is.double), \(x) signif(x, 3)))
+```
+
+The absolute-gap contrast in the own-baseline model assumes the Consented gap
+is positive and the Declined gap negative; check this in the table above
+before interpreting it.
+
+The two analyses address different questions. The group-level comparison
+includes the fact that decliners are generally lower raters (see the
+consent-rate analysis above). The own-baseline comparison removes each
+person's general level, so it reflects how ratings in the vignette where a
+decision was made differ from that person's own Not asked ratings. A
+vignette-specific decision may still reflect a vignette-specific reaction
+(e.g. disliking that particular scenario), so neither comparison isolates an
+effect of the decision itself.
+
+### Is the own-baseline decline effect concentrated in V3?
+
+Most "Declined both" ratings come from V3, so the signed own-baseline
+difference (Declined − Consented) may be driven by that vignette. This is
+checked in three ways:
+
+1. **Decision × vignette.** The own-baseline model is refitted with a
+   decision × vignette interaction (Satterthwaite F-test, Holm-corrected
+   across outcomes). Declined − Consented is then estimated within each
+   vignette, and V3 is compared with the average of V1 and V2.
+2. **Leaving out V3.** The original own-baseline model is refitted without
+   the V3 "Declined both" ratings, and without V3 altogether.
+3. **Who carries the estimate.** The random intercept absorbs each
+   participant's general level, so the model leans on participants whose
+   decision differed between their two Asked vignettes: for them, Declined −
+   Consented is a direct within-person comparison. The model is refitted
+   without these participants, and also without the random intercept
+   (ordinary regression with cluster-robust CR1 SEs by participant), which
+   weights every observation equally.
+
+```{r}
+#| label: own-gap-v3-counts
+
+own_gap_data |>
+  count(vignette, decision) |>
+  pivot_wider(names_from = decision, values_from = n, values_fill = 0)
+
+# Participants whose decision differed between their two Asked vignettes
+switchers <- own_gap_data |>
+  summarise(n_decisions = n_distinct(decision), .by = ResponseId) |>
+  filter(n_decisions > 1) |>
+  pull(ResponseId)
+
+length(switchers)
+
+# Switchers who declined both requests in one vignette: which vignette?
+switcher_declines <- own_gap_data |>
+  filter(ResponseId %in% switchers, decision == "Declined both") |>
+  count(vignette, name = "participants")
+
+switcher_declines
+```
+
+```{r}
+#| label: own-gap-v3-interaction
+
+fit_own_v <- map(names(outcome_labels), \(y) {
+  lmer(
+    reformulate(c("decision * vignette", "(1 | ResponseId)"), y),
+    data = own_gap_data
+  )
+}) |>
+  set_names(outcome_labels)
+
+own_v_int <- imap(fit_own_v, \(m, nm) {
+  a <- anova(m)["decision:vignette", ]
+  tibble(
+    measure = nm,
+    F = a[["F value"]],
+    num_df = a[["NumDF"]],
+    den_df = a[["DenDF"]],
+    p = a[["Pr(>F)"]]
+  )
+}) |>
+  list_rbind() |>
+  mutate(p_holm = p.adjust(p, "holm"))
+
+own_v_int |>
+  mutate(across(where(is.double), \(x) signif(x, 3)))
+
+# Declined − Consented within each vignette, then V3 against V1–V2
+own_v_dc <- imap(fit_own_v, \(m, nm) {
+  dc <- emmeans::emmeans(m, ~ decision | vignette, lmer.df = "satterthwaite") |>
+    emmeans::contrast(list(`Declined − Consented` = c(-1, 0, 1)))
+
+  by_vignette <- summary(dc, infer = TRUE) |>
+    as_tibble() |>
+    transmute(comparison = as.character(vignette), estimate, SE, df, lower.CL, upper.CL, p.value)
+
+  v3_vs_rest <- emmeans::contrast(
+    dc,
+    list(`V1–V2 average` = c(0.5, 0.5, 0), `V3 − V1–V2 average` = c(-0.5, -0.5, 1)),
+    by = NULL
+  ) |>
+    summary(infer = TRUE) |>
+    as_tibble() |>
+    transmute(comparison = as.character(contrast), estimate, SE, df, lower.CL, upper.CL, p.value)
+
+  bind_rows(by_vignette, v3_vs_rest) |>
+    mutate(measure = nm, .before = 1)
+}) |>
+  list_rbind() |>
+  rename(std_error = SE, conf_low = lower.CL, conf_high = upper.CL, p = p.value) |>
+  mutate(measure = factor(measure, levels = outcome_labels))
+
+own_v_dc |>
+  mutate(across(where(is.double), \(x) signif(x, 3)))
+```
+
+```{r}
+#| label: own-gap-v3-sensitivity
+
+# Signed Declined − Consented own-baseline difference for a given data set
+signed_dc <- function(data, mixed = TRUE) {
+  data <- droplevels(data)
+
+  map(names(outcome_labels), \(y) {
+    if (mixed) {
+      m <- lmer(reformulate(c("decision", "vignette", "(1 | ResponseId)"), y), data = data)
+      e <- emmeans::emmeans(m, ~ decision, lmer.df = "satterthwaite")
+    } else {
+      m <- lm(reformulate(c("decision", "vignette"), y), data = data)
+      V <- sandwich::vcovCL(m, cluster = ~ ResponseId, type = "HC1")
+      e <- emmeans::emmeans(m, ~ decision, vcov. = V, df = n_distinct(data$ResponseId) - 1)
+    }
+
+    emmeans::contrast(e, list(`Declined − Consented` = c(-1, 0, 1))) |>
+      summary(infer = TRUE) |>
+      as_tibble() |>
+      mutate(measure = outcome_labels[[y]], n_declined = sum(data$decision == "Declined both"))
+  }) |>
+    list_rbind()
+}
+
+own_v_sens <- list(
+  `All observations` = signed_dc(own_gap_data),
+  `Without V3 Declined-both ratings` = signed_dc(
+    filter(own_gap_data, !(vignette == "V3" & decision == "Declined both"))
+  ),
+  `Without V3` = signed_dc(filter(own_gap_data, vignette != "V3")),
+  `Without decision switchers` = signed_dc(filter(own_gap_data, !ResponseId %in% switchers)),
+  `No random intercept (CR1 SEs)` = signed_dc(own_gap_data, mixed = FALSE)
+) |>
+  list_rbind(names_to = "fit") |>
+  transmute(
+    fit = fct_inorder(fit),
+    measure = factor(measure, levels = outcome_labels),
+    n_declined, estimate, std_error = SE, df,
+    conf_low = lower.CL, conf_high = upper.CL, p = p.value
+  ) |>
+  mutate(p_holm = p.adjust(p, "holm"), .by = fit)
+
+own_v_sens |>
+  mutate(across(where(is.double), \(x) signif(x, 3)))
+```
+
+```{r}
+#| label: plot-own-gap-v3-sensitivity
+#| fig-width: 8
+#| fig-height: 3.5
+
+ggplot(
+  own_v_sens,
+  aes(x = estimate, y = fct_rev(fit), xmin = conf_low, xmax = conf_high)
+) +
+  geom_vline(xintercept = 0, linetype = "dashed") +
+  geom_pointrange() +
+  facet_wrap(vars(measure)) +
+  labs(
+    x = "Own-baseline Declined − Consented (scale points, 95% CI)",
+    y = NULL
+  )
+```
+
+The decision × vignette test has very little power: V1 and V2 contain only a
+handful of "Declined both" ratings, so their vignette-specific estimates are
+imprecise. The leave-out refits are therefore the more informative check.
+
+## Assumption checks
+
+Residuals from the linear mixed models. Satisfaction takes only five values,
+so its residuals fall on parallel lines; this is expected and is the reason
+for the ordinal sensitivity models below.
+
+```{r}
+#| label: residuals
+#| fig-width: 9
+#| fig-height: 6
+
+model_residuals <- c(
+  set_names(fit_cond, paste("H1b:", names(fit_cond))),
+  set_names(fit_h2["Both"], "H2: Both")
+) |>
+  imap(\(m, nm) tibble(model = nm, fitted = fitted(m), resid = resid(m))) |>
+  list_rbind() |>
+  mutate(model = fct_inorder(model))
+
+ggplot(model_residuals, aes(x = fitted, y = resid)) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  geom_point(alpha = 0.4) +
+  facet_wrap(vars(model), scales = "free_x") +
+  labs(x = "Fitted value", y = "Residual")
+
+ggplot(model_residuals, aes(sample = resid)) +
+  stat_qq(alpha = 0.4) +
+  stat_qq_line() +
+  facet_wrap(vars(model)) +
+  labs(x = "Theoretical quantile", y = "Residual")
+```
+
+Normality of the participant random intercepts:
+
+```{r}
+#| label: ranef-qq
+#| fig-width: 9
+#| fig-height: 3.5
+
+c(fit_cond, set_names(fit_h2["Both"], "H2: Both")) |>
+  imap(\(m, nm) tibble(model = nm, intercept = ranef(m)$ResponseId[[1]])) |>
+  list_rbind() |>
+  mutate(model = fct_inorder(model)) |>
+  ggplot(aes(sample = intercept)) +
+  stat_qq(alpha = 0.6) +
+  stat_qq_line() +
+  facet_wrap(vars(model), nrow = 1) +
+  labs(x = "Theoretical quantile", y = "Random intercept")
+```
+
+### Influence of the largest H2 residual
+
+The joint H2 model has one large negative residual. Refitting without that
+observation checks whether it drives the results.
+
+```{r}
+#| label: h2-outlier
+
+outlier <- which.max(abs(resid(fit_h2$Both)))
+
+h2_data[outlier, ] |>
+  select(ResponseId, vignette, condition, trust_score, accept_score, satisfaction)
+
+bind_rows(
+  `All observations` = h2 |> filter(model == "Both"),
+  `Outlier removed` = update(fit_h2$Both, data = h2_data[-outlier, ]) |>
+    broom.mixed::tidy(effects = "fixed", conf.int = TRUE),
+  .id = "fit"
+) |>
+  filter(str_detect(term, "trust|accept")) |>
+  select(fit, term, estimate, conf.low, conf.high, p.value) |>
+  arrange(term, fit) |>
+  mutate(across(where(is.double), \(x) signif(x, 3)))
+```
+
+### Ordinal sensitivity models for satisfaction
+
+Cumulative link mixed models (`ordinal::clmm`, logit link) treat satisfaction
+as ordered categories rather than an interval score. Estimates are on the
+log-odds scale, so only their direction and p-values are comparable with the
+linear models.
+
+```{r}
+#| label: ordinal
+
+table(satisfaction = h2_data$satisfaction)
+
+ord_data <- h2_data |>
+  mutate(sat_ord = factor(satisfaction, levels = 1:5, ordered = TRUE))
+
+clmm_cond <- ordinal::clmm(
+  sat_ord ~ not_asked_w + not_asked_pm + vignette + (1 | ResponseId),
+  data = ord_data,
+  nAGQ = 10
+)
+
+clmm_h2 <- ordinal::clmm(
+  sat_ord ~ trust_w + trust_pm + accept_w + accept_pm + not_asked + vignette +
+    (1 | ResponseId),
+  data = ord_data,
+  nAGQ = 10
+)
+
+ordinal_terms <- c("not_asked_w", "trust_w", "trust_pm", "accept_w", "accept_pm")
+
+list(`H1b: Satisfaction` = clmm_cond, `H2: Both` = clmm_h2) |>
+  imap(\(m, nm) {
+    coef(summary(m)) |>
+      as_tibble(rownames = "term") |>
+      filter(term %in% ordinal_terms) |>
+      mutate(model = nm, .before = 1)
+  }) |>
+  list_rbind() |>
+  rename(estimate = Estimate, std_error = `Std. Error`, z = `z value`, p = `Pr(>|z|)`) |>
+  mutate(
+    odds_ratio = exp(estimate),
+    across(where(is.double), \(x) signif(x, 3))
+  )
+```
+
+## Save results
+
+Model results used by `figures.qmd`.
+
+```{r}
+#| label: save-results
+
+dir.create(here::here("output"), showWarnings = FALSE)
+
+write_rds(
+  list(
+    mm_data = mm_data,
+    h1b = h1b,
+    h1b_tost = h1b_tost,
+    h2 = h2,
+    status_data = status_data,
+    status_means = status_means,
+    gap_group = gap_group,
+    gap_own = gap_own,
+    outcome_labels = outcome_labels
+  ),
+  here::here("output", "inferential_results.rds")
+)
+```
+
+## Summary
+
+```{r}
+#| label: summary-values
+#| include: false
+
+f2 <- \(x) format(round(x, 2), nsmall = 2)
+fp <- \(p) if_else(p < .001, "< .001", paste("=", format(round(p, 3), nsmall = 3)))
+
+h1a_neg <- sum(h1a$diff < 0)
+h1a_min_p <- min(h1a$p)
+power_d <- power.t.test(n = 29, power = 0.8, sd = 1, sig.level = 0.05)$delta
+
+h1b_row <- \(m) filter(h1b, measure == m)
+h1b_text <- \(m) {
+  r <- h1b_row(m)
+  glue::glue(
+    "{str_to_lower(m)} b = {f2(r$estimate)} [{f2(r$conf.low)}, {f2(r$conf.high)}], p {fp(r$p.value)}"
+  )
+}
+
+int_min <- slice_min(int_tests, p, n = 1)
+tost_min_text <- h1b_tost |>
+  mutate(txt = glue::glue(
+    "{str_to_lower(measure)} ±{f2(min_bound)} points ({f2(min_bound_sd)} SD)"
+  )) |>
+  pull(txt) |>
+  paste(collapse = ", ")
+tost_quarter <- tost_grid |>
+  filter(bound_label == "±0.25 points")
+carry_prev <- carryover |>
+  filter(term == "prev_not_asked")
+
+dec_declined <- dec_contrasts |>
+  filter(str_starts(contrast, "Declined"))
+dec_mixed <- dec_contrasts |>
+  filter(str_starts(contrast, "Mixed"))
+
+rng <- \(x) paste0(f2(min(x)), "–", f2(max(x)))
+abs_group <- filter(gap_group, str_starts(contrast, "\\|"))
+abs_own <- filter(gap_own, str_starts(contrast, "\\|"))
+own_cons <- filter(gap_own, contrast == "Consented gap")
+own_decl <- filter(gap_own, contrast == "Declined gap")
+own_signed <- filter(gap_own, str_detect(contrast, "signed"))
+
+v_dc <- \(cmp) filter(own_v_dc, comparison == cmp)
+sens <- \(f) filter(own_v_sens, fit == f)
+n_declined_v <- own_gap_data |>
+  filter(decision == "Declined both") |>
+  count(vignette) |>
+  pull(n)
+
+h2_both <- h2 |> filter(model == "Both")
+h2_text <- \(t) {
+  r <- filter(h2_both, term == t)
+  glue::glue("b = {f2(r$estimate)} [{f2(r$conf.low)}, {f2(r$conf.high)}], p {fp(r$p.value)}")
+}
+```
+
+- **H1a (between-person, by vignette): not supported.** None of the 9
+  Welch tests are significant (smallest unadjusted p = `r f2(h1a_min_p)`;
+  smallest Holm-adjusted p = `r f2(min(h1a$p_holm))`), and the Wilcoxon
+  tests agree. `r h1a_neg` of 9 differences are in the hypothesised direction;
+  the V3 trust and acceptance differences point the other way. With about 29
+  per group, these tests had 80% power only for differences of roughly
+  d = `r f2(power_d)`, so moderate effects cannot be ruled out.
+- **H1b (within-person): not supported.** Estimates are all slightly
+  negative (Not asked lower) but small and not significant:
+  `r h1b_text("Trust")`; `r h1b_text("Acceptance")`;
+  `r h1b_text("Satisfaction")` (scale points, 95% CI, unadjusted p). The CIs
+  rule out within-person drops larger than about
+  `r f2(-min(h1b$conf.low))` points on any measure. The ordinal model for
+  satisfaction gives the same conclusion.
+- **H1b follow-ups.** The condition effect does not differ significantly
+  across vignettes (strongest interaction: `r str_to_lower(int_min$measure)`,
+  F(`r int_min$num_df`, `r round(int_min$den_df)`) = `r f2(int_min$F)`,
+  p `r fp(int_min$p)`, Holm p `r fp(int_min$p_holm)`). Equivalence tests show
+  the within-person effects are smaller than `r tost_min_text`; at a bound of
+  ±0.25 points, equivalence holds for
+  `r sum(tost_quarter$equivalent)` of 3 outcomes
+  (`r paste(str_to_lower(tost_quarter$measure[tost_quarter$equivalent]), collapse = " and ")`).
+  Whether this counts as negligible depends on the smallest effect of interest,
+  which was not pre-specified. There is no evidence of carryover from the
+  previous vignette's condition (p = `r f2(min(carry_prev$p.value))` to
+  `r f2(max(carry_prev$p.value))`).
+- **H2 (trust and acceptance predicting satisfaction): supported, mainly
+  through acceptance.** In the joint model, within-person changes in both
+  trust (`r h2_text("trust_w")`) and acceptance (`r h2_text("accept_w")`)
+  predict satisfaction. Between people, acceptance predicts satisfaction
+  (`r h2_text("accept_pm")`), but trust adds little once acceptance is
+  accounted for (`r h2_text("trust_pm")`), although trust alone does predict
+  it. The ordinal model agrees. These are same-time, same-source associations,
+  not causal effects.
+- **Exploratory: consent decision among Asked participants.** Ratings differ
+  by decision for all three outcomes (largest Holm-adjusted p `r fp(max(dec_omnibus$p_holm))`).
+  Compared with consenting to both requests, declining both is associated with
+  ratings `r f2(min(-dec_declined$estimate))`–`r f2(max(-dec_declined$estimate))`
+  points lower, and a mixed decision with ratings
+  `r f2(min(-dec_mixed$estimate))`–`r f2(max(-dec_mixed$estimate))` points
+  lower. The same participants also rate lower in vignettes where they were
+  not asked (`r f2(min(disposition$estimate))`–`r f2(max(disposition$estimate))`
+  points from accepting no requests to accepting all), so the decision largely
+  marks participants' pre-existing stance towards MedHelper rather than an
+  effect of consenting. The gap is somewhat larger in Asked than in Not asked
+  vignettes for every outcome (difference
+  `r f2(min(gap_interaction$estimate))`–`r f2(max(gap_interaction$estimate))`
+  points), but none of these differences are significant (smallest Holm p
+  `r fp(min(gap_interaction$p_holm))`) and the CIs run from about
+  `r f2(min(gap_interaction$conf.low))` to `r f2(max(gap_interaction$conf.high))`,
+  so an added effect of the decision can be neither confirmed nor ruled out.
+- **Exploratory: is Not asked closer to consenters than to decliners?** At
+  the group level, the Not asked–Declined gap exceeds the Not
+  asked–Consented gap by `r rng(abs_group$estimate)` points, but not
+  significantly after Holm correction (unadjusted p =
+  `r f2(min(abs_group$p))`–`r f2(max(abs_group$p))`; Holm p ≥
+  `r f2(min(abs_group$p_holm))`). Relative to each participant's own Not asked
+  ratings, consenters rate `r rng(own_cons$estimate)` points higher and
+  decliners `r rng(-own_decl$estimate)` points lower, so the two gaps are of
+  similar size (absolute-gap difference `r rng(abs_own$estimate)`, all
+  p ≥ `r f2(min(abs_own$p))`). The signed difference between them
+  (`r rng(-own_signed$estimate)` points, Holm p ≤
+  `r sprintf("%.3f", max(own_signed$p_holm))`) shows that ratings in the vignette where a
+  participant declined are lower relative to their own baseline than ratings
+  where they consented, which the person-level consent-rate analysis did not
+  detect. This is still an association with a self-chosen decision, and it is
+  fragile (next point).
+- **Exploratory: is the own-baseline decline effect concentrated in V3?**
+  There is no evidence that it differs by vignette (decision × vignette
+  p = `r f2(min(own_v_int$p))`–`r f2(max(own_v_int$p))`, unadjusted). In V3,
+  declined ratings are `r rng(-v_dc("V3")$estimate)` points lower than
+  consented ratings (relative to own baseline), compared with
+  `r rng(-v_dc("V1–V2 average")$estimate)` on average in V1–V2. But this test
+  has almost no power (`r paste(n_declined_v, collapse = ", ")` "Declined
+  both" ratings in V1–V3), and the significant result does lean on V3 and on
+  a few people. Without the V3 "Declined both" ratings, the gap keeps its
+  direction (`r rng(-sens("Without V3 Declined-both ratings")$estimate)`
+  points lower) but is not significant for any outcome
+  (p = `r f2(min(sens("Without V3 Declined-both ratings")$p))`–`r f2(max(sens("Without V3 Declined-both ratings")$p))`).
+  Most of the evidence comes from the `r length(switchers)` participants whose
+  decision differed between their two Asked vignettes. Without them, the gap
+  shrinks to `r rng(-sens("Without decision switchers")$estimate)` points
+  (all p ≥ `r f2(min(sens("Without decision switchers")$p))`). Of the
+  `r sum(switcher_declines$participants)` switchers who declined both
+  requests in one vignette, `r filter(switcher_declines, vignette == "V3")$participants`
+  did so in V3. Weighting all observations equally (no random intercept)
+  gives a gap of `r rng(-sens("No random intercept (CR1 SEs)")$estimate)`
+  points, significant only for
+  `r paste(str_to_lower(sens("No random intercept (CR1 SEs)")$measure[sens("No random intercept (CR1 SEs)")$p < .05]), collapse = " and ")`.
+  The vignette-specific association is therefore weak evidence, resting
+  mainly on a handful of participants who declined in V3.

@@ -1,0 +1,357 @@
+---
+title: "Method: Data Analysis and Results (draft)"
+format: docx
+---
+
+<!--
+Drafted from scripts/inferential.qmd (rendered 2026-11-20). All numbers are
+hard-coded; re-check against inferential.html if the data or models change.
+Bracketed text marks decisions or details for the authors to fill in.
+Figures are produced by scripts/figures.qmd and saved in figures/.
+-->
+
+## Method
+
+### Data Analysis
+
+**Scoring.** For each vignette, trust was scored as the mean of 10 items
+(five trust items and five distrust items, the latter reverse-coded so that
+higher scores indicate greater trust), and acceptance as the mean of four
+items. Satisfaction was a single item. All three outcomes ranged from 1 to 5.
+
+**Analytic sample and coding.** Analyses included all participants who
+responded to at least one vignette (*N* = 58; 174 participant × vignette
+observations). No outcome data were missing. Each participant was assigned to
+the Asked condition (consent was requested before MedHelper acted) in some
+vignettes and the Not asked condition (informed afterwards) in the others, so
+condition varied both between participants within a vignette and within
+participants across vignettes. Condition was coded 0 = Asked, 1 = Not asked,
+so negative condition effects are in the hypothesized direction. All tests
+were two-sided with α = .05. Holm's (1979) correction was applied within each
+family of related tests (the nine between-participant comparisons in H1; the
+three outcomes in each set of mixed models).
+
+**Between-participant effects of condition (H1).** Within each vignette,
+participants in the Asked and Not asked conditions were compared on each
+outcome with Welch's *t* tests, which do not assume equal variances. Effect
+sizes are Hedges' *g* computed with unpooled standard deviations, with 95% CIs.
+Wilcoxon rank-sum tests were run as a nonparametric check.
+
+**Within-participant effects of condition (H1).** Because each participant
+contributed three observations, within-participant effects were estimated
+with linear mixed models, with a random intercept for participant and vignette
+entered as a fixed effect to absorb differences between vignettes (and their
+fixed presentation order). To separate within- from between-participant
+variation (Enders & Tofighi, 2007), the condition indicator was decomposed into
+the participant's proportion of Not asked vignettes (between) and the
+deviation from that proportion (within); the within-person coefficient is the
+estimate of interest. Three follow-up analyses were conducted: (a) a
+Condition × Vignette interaction, tested with an *F* test, to assess whether
+the effect varied across vignettes; (b) equivalence tests using the two
+one-sided tests procedure (TOST; Lakens, 2017), based on the 90% CI of the
+within-person estimate, to assess whether any effect was negligibly small
+[state the smallest effect size of interest and its justification]; and
+(c) a carryover model, fitted to Vignettes 2 and 3, that added the condition
+of the preceding vignette and its interaction with the current condition.
+
+**Trust and acceptance as predictors of satisfaction (H2).** Satisfaction was
+modeled as a function of trust and acceptance, each decomposed into a person
+mean (between-participant component) and the deviation from that mean
+(within-participant component), with condition and vignette as covariates and
+a random intercept for participant. Trust and acceptance were entered first
+separately and then jointly to estimate their unique contributions.
+Multicollinearity was assessed with variance inflation factors (VIFs), and
+variance explained with marginal and conditional *R*^2^ (Nakagawa &
+Schielzeth, 2013).
+
+**Exploratory analyses.** Among Asked vignettes, ratings were compared across
+participants' responses to the two consent requests (consented to both,
+consented to one, declined both) using mixed models of the same form, with
+each group compared with "consented to both" (Holm-adjusted). To examine
+whether differences reflected a general stance toward MedHelper, each
+participant's consent rate (proportion of requests accepted) was used to
+predict their ratings in Not asked vignettes, and a Consent Rate × Condition
+interaction tested whether the association was stronger in Asked than in Not
+asked vignettes. We also tested whether Not asked ratings were closer to those
+of participants who consented than to those who declined, using the contrast
+|Declined − Not asked| − |Consented − Not asked|. This was estimated in two
+ways. At the group level, we used a linear model with vignette as a covariate
+and cluster-robust (CR1) standard errors by participant. Relative to each
+participant's own baseline, we subtracted the participant's mean Not asked
+rating from each of their Asked ratings and compared these differences across
+decisions with a mixed model. Because most "declined both" responses occurred
+in Vignette 3, the own-baseline model was also refitted with a Decision ×
+Vignette interaction, without Vignette 3, without participants whose decision
+differed between their two Asked vignettes, and without the random intercept.
+These analyses were not planned in advance and are correlational.
+
+**Assumption checks and sensitivity analyses.** Residual and random-effect
+distributions were inspected with Q–Q plots and residual-versus-fitted
+plots. Because satisfaction was a single ordinal item, all satisfaction models
+were refitted as cumulative link mixed models with a logit link (Christensen,
+2026). The H2 model was also refitted without its single most extreme
+observation.
+
+**Software.** Analyses were conducted in R (Version 4.5.2; R Core Team, 2025)
+using lme4 (Version 2.0.6; Bates et al., 2015) with Satterthwaite degrees of
+freedom from lmerTest (Version 3.2.1; Kuznetsova et al., 2017), emmeans
+(Version 2.0.4; Lenth, 2026), effectsize (Version 1.0.3; Ben-Shachar et al.,
+2020), performance (Version 0.17.1; Lüdecke et al., 2021), and ordinal
+(Version 2026.7.26; Christensen, 2026). Figures were created with ggplot2
+(Wickham, 2016).
+
+## Results
+
+The analytic sample comprised 58 participants who each rated three vignettes
+(174 observations). The cumulative link models for satisfaction led to the same
+conclusions as the linear models in every case and are not reported further.
+
+### Descriptive Statistics
+
+Means and standard deviations by condition are shown in Table 1. Ratings fell
+near the midpoint of the 1–5 scale, and the Asked and Not asked means differed
+by no more than 0.03 points on any outcome.
+
+**Table 1**
+
+*Means and Standard Deviations of Outcomes by Condition*
+
+| Outcome | Asked *M* (*SD*) | Not asked *M* (*SD*) | Overall *M* (*SD*) |
+|---|---|---|---|
+| Trust | 2.91 (0.83) | 2.94 (0.83) | 2.92 (0.83) |
+| Acceptance | 3.28 (0.84) | 3.31 (0.78) | 3.29 (0.81) |
+| Satisfaction | 3.27 (0.91) | 3.24 (0.87) | 3.26 (0.88) |
+
+*Note.* Asked: 88 observations; Not asked: 86 observations, from 58
+participants. All outcomes were rated on a 1–5 scale.
+
+### Effect of Not Being Asked for Consent (H1)
+
+**Between-participant comparisons.** Within each vignette, ratings of
+participants who were not asked for consent did not differ significantly from
+those of participants who were asked, for any outcome (Table 2). Across the nine
+comparisons, |*t*|s ≤ 1.47, *p*s ≥ .148 (all Holm-adjusted *p*s = 1.00), and
+effect sizes ranged from *g* = −0.22 to *g* = 0.38. Only five of the nine
+differences were in the hypothesized direction; in Vignette 3, trust and
+acceptance were nominally higher in the Not asked condition. Wilcoxon rank-sum
+tests gave the same pattern (*p*s ≥ .171). With approximately 29 participants
+per condition, these comparisons had 80% power only for differences of
+*d* = 0.75 or larger.
+
+**Table 2**
+
+*Between-Participant Differences (Not Asked − Asked) by Vignette*
+
+| Vignette | Outcome | *M*~diff~ [95% CI] | *t* (*df*) | *p* | Hedges' *g* [95% CI] |
+|---|---|---|---|---|---|
+| 1 | Trust | −0.18 [−0.62, 0.25] | −0.84 (55.8) | .402 | −0.22 [−0.73, 0.29] |
+| 1 | Acceptance | −0.12 [−0.54, 0.30] | −0.57 (55.5) | .568 | −0.15 [−0.66, 0.36] |
+| 1 | Satisfaction | 0.03 [−0.39, 0.46] | 0.16 (56.0) | .872 | 0.04 [−0.47, 0.55] |
+| 2 | Trust | −0.01 [−0.47, 0.44] | −0.06 (55.8) | .952 | −0.02 [−0.52, 0.49] |
+| 2 | Acceptance | −0.09 [−0.53, 0.34] | −0.44 (55.9) | .663 | −0.11 [−0.62, 0.40] |
+| 2 | Satisfaction | −0.14 [−0.63, 0.36] | −0.56 (55.3) | .578 | −0.15 [−0.65, 0.36] |
+| 3 | Trust | 0.31 [−0.12, 0.73] | 1.44 (55.9) | .154 | 0.37 [−0.14, 0.88] |
+| 3 | Acceptance | 0.31 [−0.11, 0.74] | 1.47 (54.0) | .148 | 0.38 [−0.13, 0.89] |
+| 3 | Satisfaction | 0.02 [−0.47, 0.50] | 0.07 (54.1) | .945 | 0.02 [−0.49, 0.52] |
+
+*Note.* Welch's *t* tests. Negative values indicate lower ratings in the Not
+asked condition (the hypothesized direction). Holm-adjusted *p*s were 1.00 for
+all comparisons.
+
+**Within-participant effects.** Linear mixed models estimated the
+within-person effect of not being asked, controlling for vignette and for each
+participant's proportion of Not asked vignettes. Estimates were in the
+hypothesized direction but small and not significant (Figure 1) for trust,
+*b* = −0.03, *SE* = 0.06, 95% CI [−0.16, 0.09], *t*(113.0) = −0.52,
+*p* = .602; acceptance, *b* = −0.05, *SE* = 0.08, 95% CI [−0.20, 0.10],
+*t*(113.0) = −0.67, *p* = .507; or satisfaction, *b* = −0.10, *SE* = 0.10,
+95% CI [−0.30, 0.11], *t*(113.0) = −0.92, *p* = .358 (all Holm-adjusted
+*p*s = 1.00).
+
+**Follow-up analyses.** Adding a Condition × Vignette interaction did not
+significantly improve any model: trust, *F*(2, 125.4) = 0.47, *p* = .628;
+acceptance, *F*(2, 135.1) = 2.96, *p* = .055; satisfaction,
+*F*(2, 149.4) = 0.84, *p* = .435 (Holm-adjusted *p*s ≥ .165).
+
+To assess whether the within-person effects were negligible rather than merely
+non-significant, we conducted two one-sided tests (TOST; Lakens, 2017) on
+the mixed-model estimates. [No smallest effect size of interest was
+pre-specified; state the chosen bound and its justification here.] The 90%
+CIs were [−0.14, 0.07] for trust, [−0.18, 0.08] for acceptance, and
+[−0.27, 0.08] for satisfaction, so the effects were statistically equivalent
+to zero for bounds of at least ±0.14, ±0.18, and ±0.27 scale points,
+respectively (±0.16, ±0.22, and ±0.30 *SD*). With a bound of ±0.25 scale
+points, equivalence was supported for trust (*p* < .001) and acceptance
+(*p* = .006) but not for satisfaction (*p* = .068). With a bound of ±0.50 scale
+points, equivalence was supported for all three outcomes (*p*s < .001).
+
+Finally, we tested for carryover by adding the previous vignette's condition to
+the within-participant models (Vignettes 2 and 3 only). The previous condition
+did not predict trust, *b* = 0.03, 95% CI [−0.21, 0.26], *p* = .828;
+acceptance, *b* = 0.13, 95% CI [−0.14, 0.41], *p* = .334; or satisfaction,
+*b* = 0.00, 95% CI [−0.36, 0.36], *p* = .983, nor did it moderate the effect of
+the current condition (*p*s ≥ .337). Because most participants switched
+conditions between consecutive vignettes, current and previous condition were
+negatively correlated (*r* = −.33), which reduces the precision of these
+estimates.
+
+In sum, H1 was not supported. Not being asked for consent did not lower trust,
+acceptance, or satisfaction, either between participants within vignettes or
+within participants across vignettes. Within participants, any such effect was
+small: the CIs exclude decreases larger than 0.16 points for trust, 0.20 for
+acceptance, and 0.30 for satisfaction.
+
+### Trust and Acceptance as Predictors of Satisfaction (H2)
+
+Satisfaction was regressed on the within- and between-person components of
+trust and acceptance, controlling for condition and vignette. Entered
+separately, trust predicted satisfaction both within participants,
+*b* = 0.86, 95% CI [0.60, 1.13], *p* < .001, and between participants,
+*b* = 0.71, 95% CI [0.55, 0.87], *p* < .001, as did acceptance (within:
+*b* = 0.77, 95% CI [0.57, 0.98], *p* < .001; between: *b* = 0.90, 95% CI
+[0.78, 1.02], *p* < .001).
+
+When both predictors were entered together (Table 3 and Figure 2), within-person
+fluctuations in both trust and acceptance uniquely predicted satisfaction.
+Between participants, however, only acceptance remained a significant
+predictor; trust did not explain satisfaction beyond acceptance. The fixed
+effects explained 65.1% of the variance in satisfaction (marginal
+*R*^2^; Nakagawa & Schielzeth, 2013) and the full model 67.7% (conditional
+*R*^2^). Multicollinearity was moderate for the between-person components
+(VIFs = 3.16–3.17) and low for the within-person components (VIFs = 1.55–1.56).
+Excluding one observation with an unusually large residual (trust = 4.1,
+acceptance = 4.0, satisfaction = 1) did not change any conclusion. H2 was
+therefore supported, with acceptance the more consistent predictor.
+
+**Table 3**
+
+*Linear Mixed Model Predicting Satisfaction From Trust and Acceptance*
+
+| Predictor | *b* | *SE* | 95% CI | *t* (*df*) | *p* |
+|---|---|---|---|---|---|
+| Trust (within) | 0.46 | 0.15 | [0.16, 0.76] | 3.00 (111.2) | .003 |
+| Trust (between) | 0.06 | 0.10 | [−0.14, 0.26] | 0.62 (55.0) | .540 |
+| Acceptance (within) | 0.56 | 0.12 | [0.32, 0.80] | 4.55 (111.2) | < .001 |
+| Acceptance (between) | 0.85 | 0.11 | [0.63, 1.06] | 7.86 (55.1) | < .001 |
+| Not asked | −0.06 | 0.08 | [−0.21, 0.10] | −0.76 (131.4) | .450 |
+| Vignette 2 | −0.08 | 0.10 | [−0.27, 0.12] | −0.78 (111.2) | .436 |
+| Vignette 3 | −0.05 | 0.09 | [−0.24, 0.14] | −0.54 (111.2) | .593 |
+
+*Note.* *N* = 174 observations from 58 participants; random intercept for
+participant. Within = deviation from the participant's own mean; between =
+participant mean across vignettes. Reference categories: Asked, Vignette 1.
+Marginal *R*^2^ = .651, conditional *R*^2^ = .677.
+
+### Exploratory Analyses: Consent Decisions
+
+Among Asked vignettes, we explored whether ratings differed by participants'
+responses to the two consent requests: consented to both (53 observations,
+38 participants), consented to one (mixed; 22 observations, 19 participants),
+or declined both (13 observations, 11 participants). Because participants
+chose their responses, these analyses are correlational and were not
+pre-specified.
+
+Consent decision was associated with trust, *F*(2, 44.6) = 11.23,
+*p* < .001; acceptance, *F*(2, 62.9) = 19.80, *p* < .001; and satisfaction,
+*F*(2, 74.6) = 17.08, *p* < .001. Relative to participants who consented to
+both requests, those who declined both gave lower ratings of trust,
+*b* = −0.70, 95% CI [−1.06, −0.34]; acceptance, *b* = −1.21, 95% CI
+[−1.66, −0.76]; and satisfaction, *b* = −1.33, 95% CI [−1.87, −0.78]
+(Holm-adjusted *p*s < .001). Mixed decisions fell in between (trust:
+*b* = −0.32, *p* = .013; acceptance: *b* = −0.45, *p* = .005; satisfaction:
+*b* = −0.60, *p* = .002; Holm-adjusted within outcome).
+
+These differences appeared to reflect, in large part, participants' general
+stance toward MedHelper. Participants' consent rate (the proportion of requests
+accepted) also predicted their ratings in the vignettes in which they were
+*not* asked: trust, *b* = 0.96, 95% CI [0.39, 1.53], *p* = .001; acceptance,
+*b* = 0.64, 95% CI [0.08, 1.21], *p* = .027; satisfaction, *b* = 0.80, 95% CI
+[0.27, 1.33], *p* = .004. A Consent Rate × Condition interaction tested
+whether this gap was larger in Asked than in Not asked vignettes. The gap was
+numerically larger when participants were asked, but not significantly so:
+trust, *b* = 0.22, 95% CI [−0.15, 0.59], *p* = .249; acceptance, *b* = 0.36,
+95% CI [−0.10, 0.81], *p* = .127; satisfaction, *b* = 0.21, 95% CI
+[−0.40, 0.82], *p* = .502 (Holm-adjusted *p*s ≥ .382). The CIs nonetheless
+allow for a moderate additional effect of the decision, so it cannot be ruled
+out.
+
+**Distance from the Not asked condition.** Figure 3 shows mean ratings for
+each consent status. For every outcome, participants who consented to both
+requests rated at or above the Not asked mean, and those who declined both
+rated below it. At the group level, the gap between Not asked and "declined
+both" ratings was larger than the gap between Not asked and "consented to
+both" ratings by 0.66 points for trust, 95% CI [0.11, 1.22], *p* = .020; 0.76
+for acceptance, 95% CI [0.12, 1.40], *p* = .021; and 0.63 for satisfaction,
+95% CI [−0.07, 1.33], *p* = .075. None of these differences remained
+significant after Holm correction (adjusted *p*s ≥ .060).
+
+Relative to their own Not asked ratings, participants rated higher in
+vignettes where they consented to both requests (trust: 0.16, 95% CI
+[0.03, 0.30]; acceptance: 0.29, 95% CI [0.10, 0.47]; satisfaction: 0.29, 95%
+CI [0.07, 0.52]). They rated lower where they declined both (trust: −0.17,
+95% CI [−0.40, 0.07]; acceptance: −0.40, 95% CI [−0.75, −0.05]; satisfaction:
+−0.36, 95% CI [−0.79, 0.06]). The two gaps were of similar size
+(differences in absolute gap 0.00–0.12 points, *p*s ≥ .574), so the larger
+group-level gap to decliners mainly reflected decliners being lower raters in
+general. However, ratings in a vignette where the participant declined were
+lower relative to their own baseline than ratings where they consented: trust,
+*b* = −0.33, 95% CI [−0.59, −0.07], *p* = .013; acceptance, *b* = −0.69,
+95% CI [−1.07, −0.31], *p* < .001; satisfaction, *b* = −0.66, 95% CI
+[−1.13, −0.19], *p* = .007 (Holm-adjusted *p*s ≤ .014). Taken at face value,
+this suggests that the decision was associated with ratings of that
+particular vignette, beyond the participant's general stance.
+
+This vignette-specific association was not robust. Eight of the 13 "declined
+both" ratings came from Vignette 3. The association did not differ
+significantly across vignettes (Decision × Vignette interaction, *p*s ≥ .564),
+but with only two and three "declined both" ratings in Vignettes 1 and 2, this
+test had little power. When the Vignette 3 "declined both" ratings were
+removed, the differences kept their direction (−0.34 to −0.53 points) but
+were not significant for any outcome (*p*s = .069–.185). Removing Vignette 3
+altogether left only acceptance significant (*b* = −0.70, *p* < .001), an
+estimate based on five "declined both" ratings. The estimates rested largely
+on the 10 participants whose decision differed between their two Asked
+vignettes, for whom declined and consented ratings could be compared within
+the same person. Of the five such participants who declined both requests in
+one vignette, four did so in Vignette 3. Without these 10 participants, the
+differences shrank to −0.11 to −0.27 points (*p*s ≥ .286). Weighting all
+observations equally (no random intercept, cluster-robust standard errors)
+gave differences of −0.19 to −0.42 points, significant only for acceptance
+(*p* = .018; Holm-adjusted *p* = .053). The evidence for a vignette-specific
+association between declining and lower ratings therefore rests on a small
+number of participants, most of whom declined in Vignette 3. Like the other
+exploratory results, it is correlational: a participant who disliked a
+particular scenario may have declined consent because of it.
+
+<!--
+References to add to the reference list (verify details):
+- Ben-Shachar, M. S., Lüdecke, D., & Makowski, D. (2020). effectsize:
+  Estimation of effect size indices and standardized parameters. Journal of
+  Open Source Software, 5(56), 2815.
+- Lenth, R. V. (2026). emmeans: Estimated marginal means, aka least-squares
+  means (R package version 2.0.4) [Computer software].
+- Lüdecke, D., Ben-Shachar, M. S., Patil, I., Waggoner, P., & Makowski, D.
+  (2021). performance: An R package for assessment, comparison and testing of
+  statistical models. Journal of Open Source Software, 6(60), 3139.
+- R Core Team. (2025). R: A language and environment for statistical
+  computing. R Foundation for Statistical Computing.
+- Wickham, H. (2016). ggplot2: Elegant graphics for data analysis. Springer.
+- Bates, D., Mächler, M., Bolker, B., & Walker, S. (2015). Fitting linear
+  mixed-effects models using lme4. Journal of Statistical Software, 67(1), 1–48.
+- Christensen, R. H. B. (2026). ordinal: Regression models for ordinal data
+  (R package version 2026.7.26) [Computer software].
+- Enders, C. K., & Tofighi, D. (2007). Centering predictor variables in
+  cross-sectional multilevel models: A new look at an old issue.
+  Psychological Methods, 12(2), 121–138.
+- Holm, S. (1979). A simple sequentially rejective multiple test procedure.
+  Scandinavian Journal of Statistics, 6(2), 65–70.
+- Kuznetsova, A., Brockhoff, P. B., & Christensen, R. H. B. (2017). lmerTest
+  package: Tests in linear mixed effects models. Journal of Statistical
+  Software, 82(13), 1–26.
+- Lakens, D. (2017). Equivalence tests: A practical primer for t tests,
+  correlations, and meta-analyses. Social Psychological and Personality
+  Science, 8(4), 355–362.
+- Nakagawa, S., & Schielzeth, H. (2013). A general and simple method for
+  obtaining R² from generalized linear mixed-effects models. Methods in
+  Ecology and Evolution, 4(2), 133–142.
+-->

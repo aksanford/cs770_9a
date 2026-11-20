@@ -6,6 +6,10 @@ data/*
 # All CSV files
 *.csv
 
+# Saved model results (contain participant-level data; rebuilt by inferential.qmd)
+output/*
+!output/.gitkeep
+
 # OS files
 .DS_Store
 Thumbs.db

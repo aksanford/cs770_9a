@@ -1,0 +1,278 @@
+---
+title: "Manuscript Figures"
+format: html
+---
+
+Publication figures for H1 (within-person condition effects) and H2 (trust and
+acceptance predicting satisfaction). Model results come from
+`inferential.qmd`, which must be rendered first. Figures are written to
+`figures/` as vector PDF and 600 dpi PNG at full-page width (6.5 in).
+
+## Setup
+
+```{r}
+#| label: setup
+#| message: false
+#| warning: false
+
+library(tidyverse)
+library(patchwork)
+
+res <- read_rds(here::here("output", "inferential_results.rds"))
+outcome_labels <- res$outcome_labels
+
+dir.create(here::here("figures"), showWarnings = FALSE)
+
+theme_apa <- function(base_size = 10) {
+  theme_classic(base_size = base_size, base_family = "sans") +
+    theme(
+      text = element_text(colour = "black"),
+      axis.text = element_text(colour = "black"),
+      axis.line = element_line(linewidth = 0.4),
+      axis.ticks = element_line(linewidth = 0.4, colour = "black"),
+      strip.background = element_blank(),
+      strip.text = element_text(size = base_size, face = "bold"),
+      panel.spacing = unit(1, "lines"),
+      legend.position = "bottom",
+      legend.title = element_blank(),
+      legend.margin = margin(0, 0, 0, 0),
+      legend.box.spacing = unit(4, "pt"),
+      plot.tag = element_text(face = "bold", size = base_size + 1)
+    )
+}
+
+save_figure <- function(plot, name, width, height) {
+  ggsave(
+    here::here("figures", paste0(name, ".pdf")),
+    plot, width = width, height = height, units = "in", device = cairo_pdf
+  )
+  ggsave(
+    here::here("figures", paste0(name, ".png")),
+    plot, width = width, height = height, units = "in", dpi = 600,
+    device = ragg::agg_png
+  )
+}
+```
+
+## Figure 1: Within-participant effect of not being asked for consent
+
+Panel A shows each participant's observed mean rating in the vignettes where
+they were asked versus not asked (thin lines), with the mean across
+participants and its 95% CI. Panel B shows the within-person effect from the
+H1b mixed models (adjusted for vignette), with 95% CIs (thin) and 90% CIs
+(thick; the interval used for the equivalence tests).
+
+```{r}
+#| label: fig1-data
+
+person_condition <- res$mm_data |>
+  pivot_longer(names(outcome_labels), names_to = "measure", values_to = "value") |>
+  mutate(measure = factor(outcome_labels[measure], levels = outcome_labels)) |>
+  summarise(value = mean(value), .by = c(ResponseId, measure, condition))
+
+condition_means <- person_condition |>
+  summarise(
+    mean = mean(value),
+    se = sd(value) / sqrt(n()),
+    n = n(),
+    .by = c(measure, condition)
+  ) |>
+  mutate(
+    conf_low = mean - qt(0.975, n - 1) * se,
+    conf_high = mean + qt(0.975, n - 1) * se
+  )
+
+within_effects <- res$h1b_tost |>
+  mutate(measure = factor(measure, levels = rev(outcome_labels)))
+```
+
+```{r}
+#| label: fig1
+#| fig-width: 6.5
+#| fig-height: 5.5
+
+fig1a <- ggplot(person_condition, aes(x = condition, y = value)) +
+  geom_line(aes(group = ResponseId), colour = "grey70", linewidth = 0.3, alpha = 0.6) +
+  geom_errorbar(
+    data = condition_means,
+    aes(y = mean, ymin = conf_low, ymax = conf_high),
+    width = 0.12, linewidth = 0.6
+  ) +
+  geom_line(data = condition_means, aes(y = mean, group = 1), linewidth = 0.8) +
+  geom_point(data = condition_means, aes(y = mean), size = 2.4) +
+  facet_wrap(vars(measure)) +
+  scale_y_continuous(limits = c(1, 5), breaks = 1:5) +
+  scale_x_discrete(expand = expansion(add = 0.3)) +
+  labs(x = "Condition", y = "Mean rating (1–5)") +
+  theme_apa()
+
+fig1b <- ggplot(within_effects, aes(x = estimate, y = measure)) +
+  geom_vline(xintercept = 0, linetype = "dashed", linewidth = 0.4) +
+  geom_linerange(aes(xmin = conf.low, xmax = conf.high), linewidth = 0.5) +
+  geom_linerange(aes(xmin = ci90_low, xmax = ci90_high), linewidth = 1.6) +
+  geom_point(size = 2.6, shape = 21, fill = "white", stroke = 0.8) +
+  scale_x_continuous(limits = c(-0.5, 0.5), breaks = seq(-0.5, 0.5, 0.25)) +
+  labs(
+    x = "Within-participant effect of not being asked (scale points)",
+    y = NULL
+  ) +
+  theme_apa()
+
+fig1 <- fig1a / fig1b +
+  plot_layout(heights = c(2.2, 1)) +
+  plot_annotation(tag_levels = "A")
+
+fig1
+save_figure(fig1, "figure1_h1_within", width = 6.5, height = 5.5)
+```
+
+**Suggested caption.** *Figure 1. Trust, Acceptance, and Satisfaction When
+Participants Were or Were Not Asked for Consent.* (A) Thin lines show each
+participant's mean rating in vignettes in which they were asked for consent
+and in which they were not (*N* = 58). Black points and error bars show the
+mean across participants and its 95% CI. (B) Within-participant effect of not
+being asked (Not asked − Asked) from linear mixed models controlling for
+vignette. Thin bars are 95% CIs and thick bars are 90% CIs (used for the
+equivalence tests). Negative values indicate lower ratings when not asked, the
+hypothesized direction.
+
+## Figure 2: Trust and acceptance as predictors of satisfaction
+
+Fixed-effect estimates from the H2 mixed models, with trust and acceptance
+each split into within-participant (deviation from the participant's own
+mean) and between-participant (participant mean) components. Open points:
+each predictor entered on its own; filled points: both entered together.
+
+```{r}
+#| label: fig2-data
+
+h2_terms <- c(
+  trust_w = "Trust (within)",
+  trust_pm = "Trust (between)",
+  accept_w = "Acceptance (within)",
+  accept_pm = "Acceptance (between)"
+)
+
+h2_plot_data <- res$h2 |>
+  filter(term %in% names(h2_terms)) |>
+  mutate(
+    entry = if_else(model == "Both", "Entered jointly", "Entered separately"),
+    entry = factor(entry, levels = c("Entered separately", "Entered jointly")),
+    term = factor(h2_terms[term], levels = rev(h2_terms)),
+    # Offset the two estimates for each term vertically
+    y = as.numeric(term) + if_else(entry == "Entered jointly", -0.15, 0.15)
+  )
+```
+
+```{r}
+#| label: fig2
+#| fig-width: 6.5
+#| fig-height: 3.2
+
+fig2 <- ggplot(h2_plot_data, aes(x = estimate, y = y, shape = entry)) +
+  geom_vline(xintercept = 0, linetype = "dashed", linewidth = 0.4) +
+  geom_linerange(aes(xmin = conf.low, xmax = conf.high), linewidth = 0.6) +
+  geom_point(size = 2.4, fill = "white", stroke = 0.8) +
+  scale_shape_manual(values = c("Entered separately" = 21, "Entered jointly" = 16)) +
+  scale_y_continuous(
+    breaks = seq_along(levels(h2_plot_data$term)),
+    labels = levels(h2_plot_data$term),
+    expand = expansion(add = 0.4)
+  ) +
+  scale_x_continuous(limits = c(-0.25, 1.25), breaks = seq(-0.25, 1.25, 0.25)) +
+  labs(
+    x = "Change in satisfaction per 1-point increase in predictor (95% CI)",
+    y = NULL
+  ) +
+  theme_apa()
+
+fig2
+save_figure(fig2, "figure2_h2_satisfaction", width = 6.5, height = 3.2)
+```
+
+**Suggested caption.** *Figure 2. Within- and Between-Participant Associations
+of Trust and Acceptance With Satisfaction.* Unstandardized fixed-effect
+estimates and 95% CIs from linear mixed models predicting satisfaction
+(*N* = 174 observations from 58 participants), controlling for condition and
+vignette, with a random intercept for participant. Within-participant
+components are deviations from the participant's mean across vignettes;
+between-participant components are participant means. Open points show
+estimates with trust or acceptance entered alone; filled points show estimates
+with both entered together.
+
+## Figure 3: Ratings by consent status (exploratory)
+
+Group-level means for each consent status, adjusted for vignette, with 95% CIs
+from cluster-robust standard errors (by participant). Grey points are
+individual observations (jittered). The dashed line marks the Not asked mean in
+each panel, so the vertical distance from it to each group shows that group's
+gap from Not asked.
+
+```{r}
+#| label: fig3-data
+
+# Two-line axis labels with the number of observations
+status_labels <- res$status_data |>
+  count(status) |>
+  mutate(
+    label = case_match(
+      as.character(status),
+      "Not asked" ~ "Not\nasked",
+      "Consented to both" ~ "Consented\nto both",
+      "Mixed" ~ "Mixed\n",
+      "Declined both" ~ "Declined\nboth"
+    ),
+    label = paste0(label, "\n(n = ", n, ")")
+  ) |>
+  select(status, label) |>
+  deframe()
+
+status_points <- res$status_data |>
+  pivot_longer(names(outcome_labels), names_to = "measure", values_to = "value") |>
+  mutate(measure = factor(outcome_labels[measure], levels = outcome_labels))
+
+not_asked_ref <- res$status_means |>
+  filter(status == "Not asked") |>
+  select(measure, mean)
+```
+
+```{r}
+#| label: fig3
+#| fig-width: 6.5
+#| fig-height: 3.6
+
+set.seed(6317)
+
+fig3 <- ggplot(res$status_means, aes(x = status, y = mean)) +
+  geom_hline(
+    data = not_asked_ref,
+    aes(yintercept = mean),
+    linetype = "dashed", linewidth = 0.4, colour = "grey40"
+  ) +
+  geom_jitter(
+    data = status_points,
+    aes(y = value),
+    width = 0.15, height = 0.06, size = 0.7, colour = "grey70"
+  ) +
+  geom_errorbar(aes(ymin = conf_low, ymax = conf_high), width = 0.15, linewidth = 0.6) +
+  geom_point(size = 2.4) +
+  facet_wrap(vars(measure)) +
+  scale_x_discrete(labels = status_labels) +
+  scale_y_continuous(limits = c(0.9, 5.1), breaks = 1:5) +
+  labs(x = NULL, y = "Rating (1–5)") +
+  theme_apa(base_size = 9)
+
+fig3
+save_figure(fig3, "figure3_status_means", width = 6.5, height = 3.6)
+```
+
+**Suggested caption.** *Figure 3. Trust, Acceptance, and Satisfaction by
+Consent Status.* Black points and error bars show means and 95% CIs for
+vignettes in which participants were not asked for consent and, among
+vignettes in which they were asked, by their response to the two consent
+requests (consented to both, consented to one [mixed], declined both).
+Means are adjusted for vignette, and CIs use cluster-robust standard errors
+by participant (174 observations from 58 participants). Grey points are
+individual ratings, jittered to reduce overlap. The dashed line marks the Not
+asked mean. Consent responses were chosen by participants, so differences
+between groups are correlational.
